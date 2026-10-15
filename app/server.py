@@ -51,12 +51,23 @@ background:#2f5d50;color:#fff;cursor:pointer}.err{color:#a33a2c}</style></head><
 
 @app.middleware("http")
 async def require_access_code(request: Request, call_next):
-    if not ACCESS_CODE or request.url.path == "/login":
+    if not ACCESS_CODE or request.url.path in ("/login", "/healthz"):
         return await call_next(request)
     if hmac.compare_digest(request.cookies.get(COOKIE, ""), ACCESS_CODE):
         return await call_next(request)
     if request.url.path.startswith("/api/"):
         return JSONResponse({"detail": "접속 코드가 필요합니다. 페이지를 새로고침하세요."}, status_code=401)
+    return HTMLResponse(LOGIN_HTML.replace("{error}", ""))
+
+
+@app.get("/healthz")
+def healthz():
+    """배포 서비스(Render)의 상태 확인용. 접속 코드 없이 열린다."""
+    return {"ok": True}
+
+
+@app.get("/login")
+def login_page():
     return HTMLResponse(LOGIN_HTML.replace("{error}", ""))
 
 
