@@ -140,7 +140,8 @@ def me(request: Request):
 
 @app.get("/")
 def index():
-    return FileResponse(STATIC / "index.html")
+    # 배포할 때마다 화면이 바뀌므로 브라우저가 예전 화면을 저장해 두지 않게 한다 (매번 서버에 확인)
+    return FileResponse(STATIC / "index.html", headers={"Cache-Control": "no-cache"})
 
 
 @app.get("/healthz")
