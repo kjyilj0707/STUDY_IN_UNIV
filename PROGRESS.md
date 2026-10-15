@@ -172,7 +172,7 @@ python -I -X utf8 scripts/compare_notes.py 기준.md 자동.md
    - [x] Console 크레딧 구매 (10-15)
    - [x] 일반 API 키 발급·`.env` 저장·연결 확인 (10-15)
    - [ ] **월 사용 한도 설정**
-   - [ ] GitHub 저장소 → STUDY_IN_UNIV 연결 (`data/raw`, `data/courses` 등은 .gitignore)
+   - [x] GitHub 공개 저장소 https://github.com/kjyilj0707/STUDY_IN_UNIV (10-15). 제외: .env, data/, logs/, tools/. 공개용으로 교수 실명→교수A~E, 학번·전과 정보 삭제
 4. **2단계 전 (~11/7)**: Supabase, Vercel 계정
 5. **테스트 준비 (~11/24)**: 테스터 5~10명 섭외
 
