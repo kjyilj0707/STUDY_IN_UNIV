@@ -15,8 +15,18 @@ services:
         value: "1"
       - key: ANTHROPIC_API_KEY
         sync: false
+      # 회원가입 초대 코드 (INVITE_CODE 가 없으면 이 값을 쓴다)
       - key: ACCESS_CODE
         sync: false
-      # 유료 디스크를 붙이면 그 경로로 바꾼다 (예: /var/data). 무료 요금제는 재시작 때 자료가 지워진다.
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SECRET_KEY
+        sync: false
+      # 관리자 이메일 (쉼표로 여러 개). 관리자는 생성 제한 없음 + 관리자 화면
+      - key: ADMIN_EMAILS
+        sync: false
+      - key: DAILY_LIMIT
+        value: "3"
+      # 과목·강의·노트는 Supabase에 저장된다. 여기는 임시 사용량 로그만 둔다.
       - key: DATA_DIR
         value: /tmp/study-in-univ

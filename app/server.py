@@ -1,227 +1,204 @@
-"""로컬 미리보기 웹 서버 (배포 전). 실행: python -I -X utf8 -m uvicorn app.server:app --port 8000  (STUDY_IN_UNIV에서)
+"""웹 서버 (로컬 미리보기 · Render 배포 공용). 실행: python -X utf8 -m uvicorn app.server:app --port 8000  (STUDY_IN_UNIV에서)
 
-저장 위치: data/web/ (개인 자료라 git 제외). 과목 = data/web/courses/{cid}/course.json,
-강의 = .../lectures/{lid}/ (source.pdf, note.md, meta.json).
-생성은 몇 분 걸리므로 스레드로 돌리고 화면은 /api/jobs/{jid}를 폴링한다.
+- 로그인: Supabase Auth (이메일 + 비밀번호). 가입에는 초대 코드(INVITE_CODE, 없으면 ACCESS_CODE)가 필요하다.
+  토큰은 httponly 쿠키에 두고, 만료되면 refresh 토큰으로 자동 갱신한다.
+- 저장: Supabase (app/store.py). 사용자마다 자기 과목·강의만 보인다. 사용 기록은 events 표에 쌓는다.
+- 한도: 한 사람당 하루 노트 생성 DAILY_LIMIT(기본 3)개. ADMIN_EMAILS 에 있는 사람은 제한 없음 + 관리자 화면.
+- 생성은 몇 분 걸리므로 스레드로 돌리고, 화면은 /api/lectures/{lid}/progress 를 폴링한다.
 """
 import hmac
-import json
 import os
-import shutil
+import tempfile
 import threading
+import time
 import traceback
-import uuid
-from datetime import datetime
 from pathlib import Path
 
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse
+from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from app import engine
+from app import engine, store
 
-ROOT = engine.ROOT
-# 클라우드 배포에서는 DATA_DIR(디스크 경로)에 저장한다. 사용량 기록도 같은 곳에 둔다.
-WEB = Path(os.environ["DATA_DIR"]) if os.environ.get("DATA_DIR") else ROOT / "data" / "web"
-if os.environ.get("DATA_DIR"):
-    engine.USAGE_LOG = WEB / "api_usage.jsonl"
-COURSES = WEB / "courses"
-UPLOADS = WEB / "uploads"
 STATIC = Path(__file__).parent / "static"
+TMP = Path(tempfile.gettempdir()) / "study-in-univ"
+TMP.mkdir(parents=True, exist_ok=True)
+if os.environ.get("DATA_DIR"):
+    engine.USAGE_LOG = Path(os.environ["DATA_DIR"]) / "api_usage.jsonl"
 
-app = FastAPI(title="STUDY_IN_UNIV 로컬 미리보기")
-JOBS = {}
+INVITE_CODE = engine.env_value("INVITE_CODE") or engine.env_value("ACCESS_CODE")
+ADMIN_EMAILS = {e.strip().lower() for e in engine.env_value("ADMIN_EMAILS").split(",") if e.strip()}
+DAILY_LIMIT = int(engine.env_value("DAILY_LIMIT") or 3)
+ACCESS_COOKIE, REFRESH_COOKIE = "siu_at", "siu_rt"
+
+app = FastAPI(title="STUDY IN UNIV")
+JOBS = {}  # lid → {"phase", "chars"}  (진행 상황만. 결과는 DB에)
 LOCK = threading.Lock()
+_token_cache = {}  # access token → (user, 확인 시각)
 
-# 링크로 공유할 때 아무나 크레딧을 쓰지 못하게 하는 접속 코드 (.env 의 ACCESS_CODE). 비어 있으면 검사하지 않는다.
-ACCESS_CODE = engine.env_value("ACCESS_CODE")
-COOKIE = "siu_access"
-LOGIN_HTML = """<!doctype html><html lang="ko"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1"><title>STUDY IN UNIV</title>
-<style>body{margin:0;min-height:100vh;display:grid;place-items:center;background:#f6f6f3;color:#1c1c1a;
-font-family:Pretendard,-apple-system,"Malgun Gothic",sans-serif}form{background:#fff;border:1px solid #e2e1dc;
-border-radius:12px;padding:28px;width:min(340px,calc(100vw - 32px));display:grid;gap:12px}
-h1{font-size:20px;margin:0}p{margin:0;color:#6b6b66;font-size:14px}input{font:inherit;padding:9px 11px;
-border:1px solid #e2e1dc;border-radius:8px}button{font:inherit;padding:9px;border:0;border-radius:8px;
-background:#2f5d50;color:#fff;cursor:pointer}.err{color:#a33a2c}</style></head><body>
-<form method="post" action="/login"><h1>STUDY IN UNIV</h1><p>미리보기 접속 코드를 입력하세요.</p>{error}
-<input name="code" type="password" autofocus placeholder="접속 코드"><button>들어가기</button></form></body></html>"""
+try:
+    store.fail_interrupted_jobs()
+except Exception as e:  # 설정이 없으면 화면에서 안내한다
+    print("Supabase 연결 확인 실패:", e)
+
+
+# ---------- 로그인 처리 ----------
+
+def is_admin(user):
+    return user["email"].lower() in ADMIN_EMAILS
+
+
+def _user_for(token):
+    hit = _token_cache.get(token)
+    if hit and time.time() - hit[1] < 120:
+        return hit[0]
+    user = store.user_from_token(token)
+    if user:
+        _token_cache[token] = (user, time.time())
+    return user
+
+
+def _set_session(res, request, session):
+    secure = request.headers.get("x-forwarded-proto", request.url.scheme) == "https"
+    opts = {"httponly": True, "samesite": "lax", "secure": secure, "max_age": 60 * 60 * 24 * 30}
+    res.set_cookie(ACCESS_COOKIE, session["access_token"], **opts)
+    res.set_cookie(REFRESH_COOKIE, session["refresh_token"], **opts)
 
 
 @app.middleware("http")
-async def require_access_code(request: Request, call_next):
-    if not ACCESS_CODE or request.url.path in ("/login", "/healthz"):
-        return await call_next(request)
-    if hmac.compare_digest(request.cookies.get(COOKIE, ""), ACCESS_CODE):
-        return await call_next(request)
-    if request.url.path.startswith("/api/"):
-        return JSONResponse({"detail": "접속 코드가 필요합니다. 페이지를 새로고침하세요."}, status_code=401)
-    return HTMLResponse(LOGIN_HTML.replace("{error}", ""))
+async def attach_user(request: Request, call_next):
+    request.state.user, refreshed = None, None
+    token = request.cookies.get(ACCESS_COOKIE)
+    if token:
+        request.state.user = _user_for(token)
+    if not request.state.user and request.cookies.get(REFRESH_COOKIE):
+        refreshed = store.refresh(request.cookies[REFRESH_COOKIE])
+        if refreshed:
+            request.state.user = refreshed["user"]
+    response = await call_next(request)
+    if refreshed:
+        _set_session(response, request, refreshed)
+    return response
 
 
-@app.get("/healthz")
-def healthz():
-    """배포 서비스(Render)의 상태 확인용. 접속 코드 없이 열린다."""
-    return {"ok": True}
+def require_user(request: Request):
+    if not request.state.user:
+        raise HTTPException(401, "로그인이 필요해요.")
+    return request.state.user
 
 
-@app.get("/login")
-def login_page():
-    return HTMLResponse(LOGIN_HTML.replace("{error}", ""))
+class Credentials(BaseModel):
+    email: str
+    password: str
+    invite_code: str = ""
 
 
-@app.post("/login")
-def login(code: str = Form("")):
-    if not ACCESS_CODE or not hmac.compare_digest(code.strip(), ACCESS_CODE):
-        return HTMLResponse(LOGIN_HTML.replace("{error}", '<p class="err">코드가 맞지 않아요.</p>'), status_code=401)
-    res = RedirectResponse("/", status_code=303)
-    res.set_cookie(COOKIE, ACCESS_CODE, max_age=60 * 60 * 24 * 30, httponly=True, samesite="lax")
+@app.post("/api/auth/signup")
+def signup(body: Credentials, request: Request):
+    if not INVITE_CODE or not hmac.compare_digest(body.invite_code.strip(), INVITE_CODE):
+        raise HTTPException(400, "초대 코드가 맞지 않아요.")
+    try:
+        session = store.sign_up(body.email.strip(), body.password)
+    except store.StoreError as e:
+        raise HTTPException(400, str(e))
+    store.log_event(session["user"]["id"], "signup")
+    res = JSONResponse({"ok": True})
+    _set_session(res, request, session)
     return res
 
 
-def now():
-    return datetime.now().isoformat(timespec="seconds")
+@app.post("/api/auth/login")
+def login(body: Credentials, request: Request):
+    try:
+        session = store.sign_in(body.email.strip(), body.password)
+    except store.StoreError as e:
+        raise HTTPException(400, str(e))
+    store.log_event(session["user"]["id"], "login")
+    res = JSONResponse({"ok": True})
+    _set_session(res, request, session)
+    return res
 
 
-def read_json(path):
-    return json.loads(path.read_text(encoding="utf-8"))
+@app.post("/api/auth/logout")
+def logout():
+    res = JSONResponse({"ok": True})
+    res.delete_cookie(ACCESS_COOKIE)
+    res.delete_cookie(REFRESH_COOKIE)
+    return res
 
 
-def write_json(path, data):
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+@app.get("/api/me")
+def me(request: Request):
+    user = require_user(request)
+    admin = is_admin(user)
+    return {**user, "is_admin": admin, "daily_limit": None if admin else DAILY_LIMIT,
+            "generations_today": store.generations_today(user["id"])}
 
 
-def course_dir(cid):
-    d = COURSES / cid
-    if not (d / "course.json").exists():
-        raise HTTPException(404, "과목이 없습니다.")
-    return d
-
-
-def lecture_dir(cid, lid):
-    d = course_dir(cid) / "lectures" / lid
-    if not (d / "meta.json").exists():
-        raise HTTPException(404, "강의가 없습니다.")
-    return d
-
-
-def pipeline(course_type):
-    return [{"code": code, "name": name, "ready": code in engine.TEMPLATES}
-            for code, name in engine.PIPELINES[course_type]]
-
-
-def course_summary(d):
-    c = read_json(d / "course.json")
-    lectures = []
-    for ld in sorted((d / "lectures").glob("*/meta.json")):
-        lectures.append(read_json(ld))
-    lectures.sort(key=lambda m: m.get("created", ""))
-    c["lectures"] = lectures
-    c["pipeline"] = pipeline(c["primary_type"])
-    c["type_name"] = engine.TYPE_NAMES[c["primary_type"]]
-    return c
-
-
-# ---------- 샘플 (처음 실행 시 지금까지 만든 노트를 불러온다) ----------
-
-SAMPLES = [
-    {
-        "dir": "A_고전문학의이해", "course_name": "고전문학의 이해", "professor": "교수A", "semester": "2026-2",
-        "primary_type": "A", "secondary_types": ["E"],
-        "evaluation": "기말 40 / 중간 대체과제 15 / 조별발표 20 / 개별보고서 15",
-        "reasons": [{"signal": "학문 분야", "evidence": "고전문학 작품(향가·가전 등)의 원문과 해석 중심 강의"},
-                    {"signal": "평가 비중", "evidence": "중간 대체과제·조별발표·개별보고서 합계 50% → E 함께 붙음"}],
-        "lectures": [
-            ("4강 신라인의 낭만과 비애, 향가의 세계", '5~6주차 "신라인의 낭만과 비애, 향가의 세계"',
-             "2_강의자료/4강 신라인의 낭만과 비애, 향가의 세계 (5).pdf", "6_생성결과/auto/A1_4강_강의노트_auto.md"),
-            ("5강 사물에 빗댄 중세 지성의 사유, 가전", '7주차 "사물에 빗댄 중세 지성의 사유, 가전"',
-             "2_강의자료/5강 사물에 빗댄 중세 지성의 사유, 가전.pdf", "6_생성결과/auto/A1_5강_강의노트_auto.md"),
-        ],
-    },
-    {
-        "dir": "B_통계와사회", "course_name": "통계와사회", "professor": "교수E", "semester": "2026-2",
-        "primary_type": "B", "secondary_types": [],
-        "evaluation": "중간 35 / 기말 45 / 연습문제 과제 10",
-        "reasons": [{"signal": "학문 분야", "evidence": "확률변수·확률분포 등 통계 이론과 계산"},
-                    {"signal": "시험 형식", "evidence": "연습문제 과제(풀이) + 중간·기말 시험"}],
-        "lectures": [
-            ("4장 확률변수와 확률분포", '5주차 "확률변수와 확률분포1", 6주차 "확률변수와 확률분포2"',
-             "2_강의자료/통계사회_제4장 (3).pdf", "6_생성결과/auto/B1_4장_장별노트_auto.md"),
-        ],
-    },
-]
-
-
-def seed_samples():
-    if COURSES.exists() and any(COURSES.iterdir()):
-        return
-    for s in SAMPLES:
-        src = ROOT / "data" / "courses" / s["dir"]
-        if not src.exists():  # 배포 환경에는 data/courses 가 없다 (저작권 자료라 git 제외)
-            continue
-        cid = uuid.uuid4().hex[:8]
-        cd = COURSES / cid
-        course = {k: s[k] for k in ("course_name", "professor", "semester", "primary_type",
-                                     "secondary_types", "evaluation", "reasons")}
-        syllabus = src / "1_수업계획서" / "수업계획서.txt"
-        course.update(id=cid, weeks=[], sample=True, created=now())
-        write_json(cd / "course.json", course)
-        if syllabus.exists():
-            shutil.copy(syllabus, cd / "syllabus.txt")
-        for title, week, pdf, note in s["lectures"]:
-            if not (src / pdf).exists() or not (src / note).exists():
-                continue
-            lid = uuid.uuid4().hex[:8]
-            ld = cd / "lectures" / lid
-            ld.mkdir(parents=True)
-            shutil.copy(src / pdf, ld / "source.pdf")
-            shutil.copy(src / note, ld / "note.md")
-            write_json(ld / "meta.json", {
-                "id": lid, "title": title, "week": week, "stage": s["primary_type"] + "1",
-                "pages": engine.pdf_profile(ld / "source.pdf")["pages"], "status": "done",
-                "created": now(), "sample": True, "omissions": None, "cost_usd": None,
-            })
-
-
-seed_samples()
-
-
-# ---------- API ----------
+# ---------- 화면 ----------
 
 @app.get("/")
 def index():
     return FileResponse(STATIC / "index.html")
 
 
+@app.get("/healthz")
+def healthz():
+    """배포 서비스(Render)의 상태 확인용."""
+    return {"ok": True}
+
+
+# ---------- 과목 ----------
+
+def pipeline(course_type):
+    return [{"code": code, "name": name, "ready": code in engine.TEMPLATES}
+            for code, name in engine.PIPELINES[course_type]]
+
+
+def decorate(course):
+    course["pipeline"] = pipeline(course["primary_type"])
+    course["type_name"] = engine.TYPE_NAMES[course["primary_type"]]
+    return course
+
+
 @app.get("/api/courses")
-def list_courses():
-    if not COURSES.exists():
-        return []
-    items = [course_summary(d) for d in COURSES.iterdir() if (d / "course.json").exists()]
-    return sorted(items, key=lambda c: c["created"])
+def list_courses(request: Request):
+    user = require_user(request)
+    counts = store.count_lectures(user["id"])
+    return [decorate({**c, "lecture_count": counts.get(c["id"], 0)}) for c in store.list_courses(user["id"])]
 
 
 @app.get("/api/courses/{cid}")
-def get_course(cid: str):
-    return course_summary(course_dir(cid))
+def get_course(cid: str, request: Request):
+    user = require_user(request)
+    course = store.get_course(user["id"], cid)
+    if not course:
+        raise HTTPException(404, "과목이 없습니다.")
+    lectures = store.list_lectures(user["id"], cid, store.LECTURE_LIST_COLUMNS)
+    for l in lectures:
+        if l["id"] in JOBS:
+            l["progress"] = JOBS[l["id"]]
+    return decorate({**course, "lectures": lectures})
 
 
 @app.post("/api/classify")
-def classify(file: UploadFile | None = File(None), text: str = Form("")):
+def classify(request: Request, file: UploadFile | None = File(None), text: str = Form("")):
     """수업계획서 PDF 또는 붙여넣은 텍스트 → 유형 판정 결과 (아직 과목을 만들지 않음)."""
+    user = require_user(request)
     if file is not None and file.filename:
-        UPLOADS.mkdir(parents=True, exist_ok=True)
-        tmp = UPLOADS / f"syllabus_{uuid.uuid4().hex[:8]}.pdf"
+        tmp = TMP / f"syllabus_{user['id']}_{int(time.time())}.pdf"
         tmp.write_bytes(file.file.read())
-        text = engine.syllabus_text_from_pdf(tmp)
+        try:
+            text = engine.syllabus_text_from_pdf(tmp)
+        finally:
+            tmp.unlink(missing_ok=True)
     if len(text.strip()) < 50:
         raise HTTPException(400, "수업계획서 내용을 읽지 못했습니다. 텍스트를 직접 붙여넣어 주세요.")
     result, record = engine.classify_syllabus(text)
-    result["pipeline"] = pipeline(result["primary_type"])
-    result["type_name"] = engine.TYPE_NAMES[result["primary_type"]]
-    return {"result": result, "syllabus_text": text, "cost_usd": record["cost_usd"]}
+    store.log_event(user["id"], "classify", primary_type=result["primary_type"],
+                    course_name=result["course_name"], cost_usd=record["cost_usd"])
+    return {"result": decorate(result), "syllabus_text": text, "cost_usd": record["cost_usd"]}
 
 
 class NewCourse(BaseModel):
@@ -237,127 +214,165 @@ class NewCourse(BaseModel):
 
 
 @app.post("/api/courses")
-def create_course(body: NewCourse):
+def create_course(body: NewCourse, request: Request):
+    user = require_user(request)
     if body.primary_type not in engine.PIPELINES:
         raise HTTPException(400, "알 수 없는 유형입니다.")
-    cid = uuid.uuid4().hex[:8]
-    cd = COURSES / cid
-    data = body.model_dump(exclude={"syllabus_text"})
-    data.update(id=cid, sample=False, created=now())
-    write_json(cd / "course.json", data)
-    (cd / "syllabus.txt").write_text(body.syllabus_text, encoding="utf-8")
-    return course_summary(cd)
+    course = store.create_course(user["id"], body.model_dump())
+    store.log_event(user["id"], "course_create", course_id=course["id"], primary_type=course["primary_type"])
+    return decorate({**course, "lectures": []})
 
 
 @app.delete("/api/courses/{cid}")
-def delete_course(cid: str):
-    shutil.rmtree(course_dir(cid))
+def delete_course(cid: str, request: Request):
+    user = require_user(request)
+    store.delete_course(user["id"], cid)
     return {"ok": True}
 
 
+# ---------- 강의 ----------
+
 @app.post("/api/courses/{cid}/lectures")
-def add_lecture(cid: str, file: UploadFile = File(...), title: str = Form(...), week: str = Form("")):
-    cd = course_dir(cid)
-    course = read_json(cd / "course.json")
+def add_lecture(cid: str, request: Request, file: UploadFile = File(...), title: str = Form(...), week: str = Form("")):
+    user = require_user(request)
+    course = store.get_course(user["id"], cid)
+    if not course:
+        raise HTTPException(404, "과목이 없습니다.")
     stage = course["primary_type"] + "1"
     if stage not in engine.TEMPLATES:
         raise HTTPException(400, f"{engine.TYPE_NAMES[course['primary_type']]}은 아직 자료 생성을 지원하지 않습니다 (MVP: A·B).")
     if not file.filename.lower().endswith(".pdf"):
         raise HTTPException(400, "PDF 파일만 올릴 수 있습니다.")
-    lid = uuid.uuid4().hex[:8]
-    ld = cd / "lectures" / lid
-    ld.mkdir(parents=True)
-    (ld / "source.pdf").write_bytes(file.file.read())
+    data = file.file.read()
+    tmp = TMP / f"upload_{user['id']}_{int(time.time())}.pdf"
+    tmp.write_bytes(data)
     try:
-        est = engine.estimate_cost(stage, ld / "source.pdf")
+        est = engine.estimate_cost(stage, tmp)
     except Exception as e:
-        shutil.rmtree(ld)
         raise HTTPException(400, f"PDF를 읽지 못했습니다: {e}")
-    meta = {"id": lid, "title": title, "week": week, "stage": stage, "pages": est["pages"],
-            "status": "ready", "created": now(), "sample": False, "estimate": est,
-            "omissions": None, "cost_usd": None}
-    write_json(ld / "meta.json", meta)
-    return meta
+    finally:
+        tmp.unlink(missing_ok=True)
+    lecture = store.create_lecture(user["id"], {
+        "course_id": cid, "title": title, "week": week, "stage": stage,
+        "pages": est["pages"], "status": "ready", "estimate": est,
+    }, data)
+    store.log_event(user["id"], "lecture_upload", course_id=cid, lecture_id=lecture["id"],
+                    pages=est["pages"], size_kb=len(data) // 1024)
+    return {k: lecture[k] for k in ("id", "title", "status")}
 
 
-@app.delete("/api/courses/{cid}/lectures/{lid}")
-def delete_lecture(cid: str, lid: str):
-    shutil.rmtree(lecture_dir(cid, lid))
+def owned_lecture(request, lid, columns="*"):
+    user = require_user(request)
+    lec = store.get_lecture(user["id"], lid, columns)
+    if not lec:
+        raise HTTPException(404, "강의가 없습니다.")
+    return user, lec
+
+
+@app.delete("/api/lectures/{lid}")
+def delete_lecture(lid: str, request: Request):
+    user = require_user(request)
+    store.delete_lecture(user["id"], lid)
     return {"ok": True}
 
 
-def run_generation(jid, cid, lid):
-    cd, ld = COURSES / cid, COURSES / cid / "lectures" / lid
-    course, meta = read_json(cd / "course.json"), read_json(ld / "meta.json")
-    job = JOBS[jid]
+def run_generation(uid, lec, course):
+    lid = lec["id"]
+    job = JOBS[lid]
     label = f"{course['course_name']} ({course['professor']} 교수, {course['semester']})"
+    pdf = TMP / f"gen_{lid}.pdf"
+    started = time.time()
 
     def on_text(t):
         job["chars"] += len(t)
 
     try:
+        pdf.write_bytes(store.download_pdf(lec["pdf_path"]))
         job["phase"] = "writing"
-        note, rec = engine.generate_note(meta["stage"], ld / "source.pdf", label, meta["week"] or "(미상)", on_text=on_text)
-        (ld / "note.md").write_text(note + "\n", encoding="utf-8")
-        cost = rec["cost_usd"]
+        note, rec = engine.generate_note(lec["stage"], pdf, label, lec["week"] or "(미상)", on_text=on_text)
+        store.update_lecture(lid, {"note": note})
         job["phase"] = "checking"
-        omissions, rec2 = engine.check_omissions(meta["stage"], ld / "source.pdf", note)
+        omissions, rec2 = engine.check_omissions(lec["stage"], pdf, note)
         note, results = engine.apply_omissions(note, omissions)
-        (ld / "note.md").write_text(note, encoding="utf-8")
-        cost += rec2["cost_usd"]
-        meta.update(status="done", omissions=results, cost_usd=round(cost, 3),
-                    truncated=rec["stop_reason"] == "max_tokens", finished=now())
-        job.update(phase="done", cost_usd=meta["cost_usd"])
+        cost = round(rec["cost_usd"] + rec2["cost_usd"], 3)
+        store.update_lecture(lid, {"status": "done", "note": note, "omissions": results, "cost_usd": cost,
+                                   "truncated": rec["stop_reason"] == "max_tokens", "error": None,
+                                   "finished_at": store.now_iso()})
+        store.log_event(uid, "generate_done", course_id=course["id"], lecture_id=lid, cost_usd=cost,
+                        seconds=round(time.time() - started), pages=lec["pages"], omissions=len(results),
+                        input_tokens=rec["input_tokens"] + rec2["input_tokens"],
+                        output_tokens=rec["output_tokens"] + rec2["output_tokens"])
     except Exception as e:
         traceback.print_exc()
-        meta.update(status="error", error=str(e))
-        job.update(phase="error", error=str(e))
-    write_json(ld / "meta.json", meta)
+        store.update_lecture(lid, {"status": "error", "error": str(e)})
+        store.log_event(uid, "generate_error", course_id=course["id"], lecture_id=lid, error=str(e)[:500])
+    finally:
+        pdf.unlink(missing_ok=True)
+        JOBS.pop(lid, None)
 
 
-@app.post("/api/courses/{cid}/lectures/{lid}/generate")
-def generate(cid: str, lid: str):
-    ld = lecture_dir(cid, lid)
-    meta = read_json(ld / "meta.json")
+@app.post("/api/lectures/{lid}/generate")
+def generate(lid: str, request: Request):
+    user, lec = owned_lecture(request, lid, "id,course_id,stage,week,pages,pdf_path,status")
     with LOCK:
-        running = next((j for j in JOBS.values() if j["lid"] == lid and j["phase"] in ("writing", "checking")), None)
-        if running:
-            return running
-        jid = uuid.uuid4().hex[:8]
-        JOBS[jid] = {"id": jid, "cid": cid, "lid": lid, "phase": "queued", "chars": 0, "started": now()}
-    meta["status"] = "running"
-    meta["job"] = jid
-    write_json(ld / "meta.json", meta)
-    threading.Thread(target=run_generation, args=(jid, cid, lid), daemon=True).start()
-    return JOBS[jid]
+        if lid in JOBS:
+            return {"status": "running"}
+        if not is_admin(user):
+            used = store.generations_today(user["id"])
+            if used >= DAILY_LIMIT:
+                raise HTTPException(429, f"오늘 만들 수 있는 노트 {DAILY_LIMIT}개를 모두 썼어요. 내일 다시 이용해 주세요.")
+        JOBS[lid] = {"phase": "queued", "chars": 0}
+    course = store.get_course(user["id"], lec["course_id"])
+    store.update_lecture(lid, {"status": "running", "error": None})
+    store.log_event(user["id"], "generate_start", course_id=lec["course_id"], lecture_id=lid, pages=lec["pages"])
+    threading.Thread(target=run_generation, args=(user["id"], lec, course), daemon=True).start()
+    return {"status": "running"}
 
 
-@app.get("/api/jobs/{jid}")
-def job_status(jid: str):
-    if jid not in JOBS:
-        raise HTTPException(404, "작업이 없습니다 (서버를 다시 켰다면 강의를 다시 생성하세요).")
-    return JOBS[jid]
+@app.get("/api/lectures/{lid}/progress")
+def progress(lid: str, request: Request):
+    _, lec = owned_lecture(request, lid, "id,status,error")
+    return {**lec, **JOBS.get(lid, {})}
 
 
-@app.get("/api/courses/{cid}/lectures/{lid}/note", response_class=PlainTextResponse)
-def get_note(cid: str, lid: str):
-    note = lecture_dir(cid, lid) / "note.md"
-    if not note.exists():
+@app.get("/api/lectures/{lid}/note", response_class=PlainTextResponse)
+def get_note(lid: str, request: Request):
+    _, lec = owned_lecture(request, lid, "note")
+    if not lec["note"]:
         raise HTTPException(404, "아직 노트가 없습니다.")
-    return note.read_text(encoding="utf-8")
+    return lec["note"]
 
 
-@app.get("/api/courses/{cid}/lectures/{lid}/source")
-def get_source(cid: str, lid: str):
-    return FileResponse(lecture_dir(cid, lid) / "source.pdf", media_type="application/pdf")
+@app.get("/api/lectures/{lid}/source")
+def get_source(lid: str, request: Request):
+    _, lec = owned_lecture(request, lid, "pdf_path,title")
+    return Response(store.download_pdf(lec["pdf_path"]), media_type="application/pdf")
 
 
-@app.get("/api/usage")
-def usage():
-    if not engine.USAGE_LOG.exists():
-        return {"total_usd": 0, "count": 0}
-    rows = [json.loads(l) for l in engine.USAGE_LOG.read_text(encoding="utf-8").splitlines() if l.strip()]
-    return {"total_usd": round(sum(r.get("cost_usd", 0) for r in rows), 2), "count": len(rows)}
+class Event(BaseModel):
+    type: str
+    lecture_id: str | None = None
+    course_id: str | None = None
+
+
+@app.post("/api/events")
+def client_event(body: Event, request: Request):
+    """화면에서만 알 수 있는 사용 기록 (노트 열람·다운로드·인쇄)."""
+    user = require_user(request)
+    if body.type not in ("note_view", "note_download", "note_print"):
+        raise HTTPException(400, "알 수 없는 기록입니다.")
+    store.log_event(user["id"], body.type, course_id=body.course_id, lecture_id=body.lecture_id)
+    return {"ok": True}
+
+
+# ---------- 관리자 ----------
+
+@app.get("/api/admin/overview")
+def admin_overview(request: Request):
+    user = require_user(request)
+    if not is_admin(user):
+        raise HTTPException(403, "관리자만 볼 수 있어요.")
+    return store.admin_overview()
 
 
 app.mount("/static", StaticFiles(directory=STATIC), name="static")

@@ -127,14 +127,27 @@ table.list a.title:hover { text-decoration: underline; }
   .note h2 { break-after: avoid; } .note h3 { break-after: avoid; }
   .note blockquote.space { break-inside: avoid; }
 }
+/* 로그인 */
+.auth { max-width: 380px; margin: 48px auto; }
+.auth h1 { text-align: center; margin-bottom: 4px; }
+.auth .sub { text-align: center; }
+.tabs { display: flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; margin-bottom: 14px; }
+.tabs button { flex: 1; border: 0; background: var(--surface); padding: 8px; cursor: pointer; color: var(--muted); }
+.tabs button.on { background: var(--accent); color: #fff; font-weight: 600; }
+.form input[type=email], .form input[type=password] { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; background: #fff; width: 100%; }
+.fine { font-size: 12px; color: var(--muted); }
+header.top .me { font-size: 13px; color: var(--muted); display: flex; gap: 10px; align-items: center; }
+header.top .me a, header.top .me button { color: var(--muted); background: none; border: 0; cursor: pointer; font-size: 13px; padding: 0; text-decoration: underline; }
+table.list td.num { text-align: right; font-variant-numeric: tabular-nums; }
+@media (max-width: 640px) { header.top .me .email { display: none; } header.top .tag { display: none; } }
 </style>
 </head>
 <body>
 <header class="top">
   <a class="logo" href="#/">STUDY IN UNIV</a>
-  <span class="tag">로컬 미리보기</span>
+  <span class="tag">테스트 버전</span>
   <span class="spacer"></span>
-  <span class="usage" id="usage"></span>
+  <span class="me" id="me"></span>
 </header>
 <main id="view"></main>
 
@@ -143,20 +156,34 @@ const $view = document.getElementById("view");
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const TYPE_NAMES = {A:"서술·해석형", B:"수리·계산형", C:"개념·사례 이해형", D:"코딩·실습형", E:"과제·프로젝트형"};
 let pollTimer = null;
+let ME = null;
+
+class AuthError extends Error {}
 
 async function api(path, opts = {}) {
   const res = await fetch(path, opts);
   const ct = res.headers.get("content-type") || "";
   const body = ct.includes("json") ? await res.json() : await res.text();
+  if (res.status === 401) throw new AuthError(body.detail || "로그인이 필요해요.");
   if (!res.ok) throw new Error(body.detail || body || res.statusText);
   return body;
 }
+const postJSON = (path, data) => api(path, {method: "POST", headers: {"content-type": "application/json"}, body: JSON.stringify(data)});
+const track = (type, lecture_id, course_id) => postJSON("/api/events", {type, lecture_id, course_id}).catch(() => {});
 
-async function refreshUsage() {
-  try {
-    const u = await api("/api/usage");
-    document.getElementById("usage").textContent = `기록된 API 사용 ${u.count}회 · $${u.total_usd}`;
-  } catch {}
+async function loadMe() {
+  ME = await api("/api/me");
+  const quota = ME.is_admin ? "관리자 · 생성 제한 없음" : `오늘 생성 ${ME.generations_today}/${ME.daily_limit}`;
+  document.getElementById("me").innerHTML = `
+    <span class="email">${esc(ME.email)}</span><span>${quota}</span>
+    ${ME.is_admin ? `<a href="#/admin">관리자</a>` : ""}
+    <button id="logout">로그아웃</button>`;
+  document.getElementById("logout").onclick = async () => {
+    await api("/api/auth/logout", {method: "POST"});
+    ME = null;
+    location.hash = "#/";
+    route();
+  };
 }
 
 function typeBadges(c) {
@@ -173,6 +200,64 @@ function pipelineHtml(steps) {
     </div>`).join("")}</div>`;
 }
 
+function setupDrop(dropId, fileId, emptyText, onPick) {
+  const drop = document.getElementById(dropId), file = document.getElementById(fileId);
+  const show = () => {
+    const f = file.files[0];
+    drop.classList.toggle("has", !!f);
+    drop.textContent = f ? `선택됨: ${f.name}` : emptyText;
+    if (f && onPick) onPick(f);
+  };
+  drop.onclick = () => file.click();
+  drop.ondragover = e => { e.preventDefault(); drop.classList.add("has"); };
+  drop.ondragleave = () => drop.classList.toggle("has", !!file.files[0]);
+  drop.ondrop = e => { e.preventDefault(); file.files = e.dataTransfer.files; show(); };
+  file.onchange = show;
+  return file;
+}
+
+// ---------- 로그인 / 가입 ----------
+function viewAuth(mode = "login") {
+  document.getElementById("me").innerHTML = "";
+  $view.innerHTML = `
+    <div class="auth">
+      <h1>STUDY IN UNIV</h1>
+      <p class="sub">수업계획서로 과목 유형을 판정하고,<br>강의 PDF로 단계별 수업 자료를 만들어요.</p>
+      <div class="card form">
+        <div class="tabs">
+          <button data-m="login" class="${mode === "login" ? "on" : ""}">로그인</button>
+          <button data-m="signup" class="${mode === "signup" ? "on" : ""}">회원가입</button>
+        </div>
+        <label>이메일<input type="email" id="email" autocomplete="email"></label>
+        <label>비밀번호${mode === "signup" ? " (6자 이상)" : ""}
+          <input type="password" id="pw" autocomplete="${mode === "signup" ? "new-password" : "current-password"}"></label>
+        ${mode === "signup" ? `<label>초대 코드<input type="text" id="invite" autocomplete="off"></label>
+          <p class="fine">테스트 기간에는 서비스 개선을 위해 사용 기록(가입·과목 생성·업로드·노트 생성·열람)이 저장돼요. 올린 PDF와 만든 노트는 본인 계정에서만 보여요.</p>` : ""}
+        <button class="btn primary" id="go">${mode === "login" ? "로그인" : "가입하고 시작하기"}</button>
+        <div id="msg"></div>
+      </div>
+    </div>`;
+  document.querySelectorAll(".tabs button").forEach(b => b.onclick = () => viewAuth(b.dataset.m));
+  const submit = async () => {
+    const msg = document.getElementById("msg"), btn = document.getElementById("go");
+    const data = {email: document.getElementById("email").value, password: document.getElementById("pw").value};
+    if (mode === "signup") data.invite_code = document.getElementById("invite").value;
+    btn.disabled = true;
+    msg.innerHTML = "";
+    try {
+      await postJSON(`/api/auth/${mode}`, data);
+      location.hash = "#/";
+      await route();
+    } catch (e) {
+      msg.innerHTML = `<div class="notice err">${esc(e.message)}</div>`;
+      btn.disabled = false;
+    }
+  };
+  document.getElementById("go").onclick = submit;
+  $view.querySelectorAll("input").forEach(i => i.onkeydown = e => { if (e.key === "Enter") submit(); });
+  document.getElementById("email").focus();
+}
+
 // ---------- 홈 ----------
 async function viewHome() {
   const courses = await api("/api/courses");
@@ -184,11 +269,12 @@ async function viewHome() {
         <a class="card" href="#/c/${c.id}">
           ${typeBadges(c)}
           <div class="name">${esc(c.course_name)}</div>
-          <div class="meta">${esc(c.professor)} 교수 · ${esc(c.semester)}</div>
-          <div class="meta">강의 자료 ${c.lectures.length}개${c.sample ? " · 샘플" : ""}</div>
+          <div class="meta">${esc(c.professor || "교수 미입력")}${c.semester ? " · " + esc(c.semester) : ""}</div>
+          <div class="meta">강의 자료 ${c.lecture_count}개</div>
         </a>`).join("")}
       <a class="card add" href="#/new">+ 새 과목 추가</a>
-    </div>`;
+    </div>
+    ${courses.length ? "" : `<p class="sub" style="margin-top:20px">처음이라면 "새 과목 추가"에서 수업계획서를 올려 보세요.</p>`}`;
 }
 
 // ---------- 새 과목 ----------
@@ -197,7 +283,7 @@ function viewNew() {
     <p><a class="btn ghost small" href="#/">← 내 과목</a></p>
     <h1>새 과목 추가</h1>
     <p class="sub">수업계획서 PDF를 올리거나 내용을 붙여넣으면 과목 유형과 단계(파이프라인)를 정해 드립니다.</p>
-    <div class="card form" id="newForm">
+    <div class="card form">
       <div class="drop" id="drop">수업계획서 PDF를 여기에 끌어다 놓거나 눌러서 선택</div>
       <input type="file" id="file" accept="application/pdf" hidden>
       <label>또는 수업계획서 내용 붙여넣기
@@ -205,32 +291,23 @@ function viewNew() {
       </label>
       <div class="row">
         <button class="btn primary" id="go">유형 판정하기</button>
-        <span class="pill">판정 1회 약 $0.05~0.1</span>
+        <span class="pill">30초~1분 걸려요</span>
       </div>
       <div id="msg"></div>
     </div>
     <div id="result"></div>`;
-  const drop = document.getElementById("drop"), file = document.getElementById("file");
-  drop.onclick = () => file.click();
-  drop.ondragover = e => { e.preventDefault(); drop.classList.add("has"); };
-  drop.ondrop = e => { e.preventDefault(); file.files = e.dataTransfer.files; showFile(); };
-  file.onchange = showFile;
-  function showFile() {
-    drop.classList.toggle("has", file.files.length > 0);
-    drop.textContent = file.files.length ? `선택됨: ${file.files[0].name}` : "수업계획서 PDF를 여기에 끌어다 놓거나 눌러서 선택";
-  }
+  const file = setupDrop("drop", "file", "수업계획서 PDF를 여기에 끌어다 놓거나 눌러서 선택");
   document.getElementById("go").onclick = async () => {
     const fd = new FormData();
     if (file.files[0]) fd.append("file", file.files[0]);
     fd.append("text", document.getElementById("text").value);
     const msg = document.getElementById("msg"), btn = document.getElementById("go");
     btn.disabled = true;
-    msg.innerHTML = `<div class="row"><span class="spinner"></span> 수업계획서를 읽고 유형을 판정하는 중… (30초~1분)</div>`;
+    msg.innerHTML = `<div class="row"><span class="spinner"></span> 수업계획서를 읽고 유형을 판정하는 중…</div>`;
     try {
       const r = await api("/api/classify", {method: "POST", body: fd});
       msg.innerHTML = "";
       showClassification(r);
-      refreshUsage();
     } catch (e) {
       msg.innerHTML = `<div class="notice err">${esc(e.message)}</div>`;
     }
@@ -240,11 +317,10 @@ function viewNew() {
 
 function showClassification(r) {
   const c = r.result;
-  const box = document.getElementById("result");
-  box.innerHTML = `
+  document.getElementById("result").innerHTML = `
     <h2>판정 결과</h2>
     <div class="card form">
-      <div class="row">${typeBadges(c)} <span class="pill">비용 $${r.cost_usd}</span></div>
+      <div class="row">${typeBadges(c)}</div>
       <div class="row">
         <label style="flex:2">과목명<input type="text" id="cName" value="${esc(c.course_name)}"></label>
         <label style="flex:1">교수<input type="text" id="cProf" value="${esc(c.professor)}"></label>
@@ -264,13 +340,12 @@ function showClassification(r) {
       <div class="row"><button class="btn primary" id="create">이 과목 만들기</button></div>
     </div>`;
   document.getElementById("create").onclick = async () => {
-    const body = {
+    const course = await postJSON("/api/courses", {
       course_name: document.getElementById("cName").value, professor: document.getElementById("cProf").value,
       semester: document.getElementById("cSem").value, primary_type: document.getElementById("cType").value,
       secondary_types: c.secondary_types, evaluation: c.evaluation, reasons: c.reasons, weeks: c.weeks,
       syllabus_text: r.syllabus_text,
-    };
-    const course = await api("/api/courses", {method: "POST", headers: {"content-type": "application/json"}, body: JSON.stringify(body)});
+    });
     location.hash = `#/c/${course.id}`;
   };
 }
@@ -287,7 +362,7 @@ async function viewCourse(cid) {
       <div>
         ${typeBadges(c)}
         <h1 style="margin-top:6px">${esc(c.course_name)}</h1>
-        <p class="sub">${esc(c.professor)} 교수 · ${esc(c.semester)}${c.evaluation ? " · 평가 " + esc(c.evaluation) : ""}</p>
+        <p class="sub">${esc(c.professor || "교수 미입력")}${c.semester ? " · " + esc(c.semester) : ""}${c.evaluation ? " · 평가 " + esc(c.evaluation) : ""}</p>
       </div>
       <button class="btn small ghost" id="delCourse">과목 삭제</button>
     </div>
@@ -299,7 +374,7 @@ async function viewCourse(cid) {
         <tr><th>강의</th><th>주차</th><th>쪽수</th><th>상태</th><th></th></tr>
         ${c.lectures.map(l => `
           <tr>
-            <td><a class="title" href="#/c/${cid}/l/${l.id}">${esc(l.title)}</a>${l.sample ? ' <span class="badge sec">샘플</span>' : ""}</td>
+            <td><a class="title" href="#/c/${cid}/l/${l.id}">${esc(l.title)}</a></td>
             <td class="pill">${esc(l.week)}</td>
             <td class="pill">${l.pages}장</td>
             <td>${l.status === "done" ? '<span class="badge">완료</span>' : l.status === "error" ? '<span class="badge warn">오류</span>' : `<span class="badge sec">${STATUS[l.status]}</span>`}</td>
@@ -321,7 +396,7 @@ async function viewCourse(cid) {
       </div>
       <div class="row"><button class="btn primary" id="upload">올리고 예상 비용 보기</button></div>
       <div id="msg"></div>
-    </div>` : `<div class="notice">${esc(TYPE_NAMES[c.primary_type])} 과목의 자료 생성은 준비 중이에요 (MVP는 A 서술·해석형, B 수리·계산형).</div>`}`;
+    </div>` : `<div class="notice">${esc(TYPE_NAMES[c.primary_type])} 과목의 자료 생성은 준비 중이에요 (지금은 A 서술·해석형, B 수리·계산형).</div>`}`;
 
   document.getElementById("delCourse").onclick = async () => {
     if (!confirm(`"${c.course_name}" 과목과 안의 자료를 모두 삭제할까요?`)) return;
@@ -329,18 +404,10 @@ async function viewCourse(cid) {
     location.hash = "#/";
   };
   if (!stage.ready) return;
-  const drop = document.getElementById("drop"), file = document.getElementById("file");
-  drop.onclick = () => file.click();
-  drop.ondragover = e => { e.preventDefault(); drop.classList.add("has"); };
-  drop.ondrop = e => { e.preventDefault(); file.files = e.dataTransfer.files; showFile(); };
-  file.onchange = showFile;
-  function showFile() {
-    const f = file.files[0];
-    drop.classList.toggle("has", !!f);
-    drop.textContent = f ? `선택됨: ${f.name}` : "강의 PDF를 끌어다 놓거나 눌러서 선택";
+  const file = setupDrop("drop", "file", "강의 PDF를 끌어다 놓거나 눌러서 선택", f => {
     const t = document.getElementById("lTitle");
-    if (f && !t.value) t.value = f.name.replace(/\.pdf$/i, "").replace(/\s*\(\d+\)$/, "");
-  }
+    if (!t.value) t.value = f.name.replace(/\.pdf$/i, "").replace(/\s*\(\d+\)$/, "");
+  });
   document.getElementById("upload").onclick = async () => {
     const msg = document.getElementById("msg");
     if (!file.files[0]) { msg.innerHTML = `<div class="notice">PDF를 먼저 선택하세요.</div>`; return; }
@@ -348,7 +415,7 @@ async function viewCourse(cid) {
     fd.append("file", file.files[0]);
     fd.append("title", document.getElementById("lTitle").value || file.files[0].name);
     fd.append("week", document.getElementById("lWeek").value);
-    msg.innerHTML = `<div class="row"><span class="spinner"></span> PDF를 확인하고 비용을 계산하는 중…</div>`;
+    msg.innerHTML = `<div class="row"><span class="spinner"></span> PDF를 올리고 비용을 계산하는 중…</div>`;
     try {
       const l = await api(`/api/courses/${cid}/lectures`, {method: "POST", body: fd});
       location.hash = `#/c/${cid}/l/${l.id}`;
@@ -364,9 +431,13 @@ async function viewLecture(cid, lid) {
   const l = c.lectures.find(x => x.id === lid);
   if (!l) { $view.innerHTML = `<div class="notice err">강의를 찾을 수 없어요.</div>`; return; }
   const back = `<a class="btn ghost small" href="#/c/${cid}">← ${esc(c.course_name)}</a>`;
+  const sourceLink = `<a class="btn small" href="/api/lectures/${lid}/source" target="_blank">원본 PDF</a>`;
+
+  if (l.status === "running") { watchJob(cid, lid); return; }
 
   if (l.status === "ready" || l.status === "error") {
     const est = l.estimate;
+    const left = ME.is_admin ? null : ME.daily_limit - ME.generations_today;
     $view.innerHTML = `
       <p>${back}</p>
       <h1>${esc(l.title)}</h1>
@@ -376,42 +447,49 @@ async function viewLecture(cid, lid) {
         <div><b>만들어지는 자료</b><br>
           <span class="pill">슬라이드 순서 그대로, 요약·누락 없이 정리 · 슬라이드마다 [p.N] 출처 · 필기 여백 · 원본 오타는 고치지 않고 ⚠ 메모${l.stage === "B1" ? " · 수식은 LaTeX, 예제는 문제/풀이/풀이 공간" : ""}</span></div>
         <div><b>과정</b><br><span class="pill">① 노트 작성 (3~6분) → ② PDF와 다시 대조해 빠진 내용 보충 (1~2분)</span></div>
-        ${est ? `<div><b>예상 비용</b> 약 $${est.low_usd} ~ $${est.high_usd} <span class="pill">(입력 ${est.input_tokens.toLocaleString()} 토큰)</span></div>` : ""}
+        ${ME.is_admin && est ? `<div><b>예상 비용</b> 약 $${est.low_usd} ~ $${est.high_usd} <span class="pill">(입력 ${est.input_tokens.toLocaleString()} 토큰)</span></div>` : ""}
+        ${left !== null ? `<div class="pill">오늘 남은 생성: ${Math.max(left, 0)}개</div>` : ""}
         <div class="row">
-          <button class="btn primary" id="gen">${l.status === "error" ? "다시 만들기" : "노트 만들기"}</button>
-          <a class="btn" href="/api/courses/${cid}/lectures/${lid}/source" target="_blank">원본 PDF 보기</a>
+          <button class="btn primary" id="gen" ${left !== null && left <= 0 ? "disabled" : ""}>${l.status === "error" ? "다시 만들기" : "노트 만들기"}</button>
+          ${sourceLink}
           <button class="btn ghost small" id="del">이 강의 삭제</button>
         </div>
+        <div id="msg"></div>
       </div>`;
     document.getElementById("gen").onclick = async () => {
-      const job = await api(`/api/courses/${cid}/lectures/${lid}/generate`, {method: "POST"});
-      watchJob(cid, lid, job.id);
+      try {
+        await api(`/api/lectures/${lid}/generate`, {method: "POST"});
+        loadMe().catch(() => {});
+        watchJob(cid, lid);
+      } catch (e) {
+        if (e instanceof AuthError) throw e;
+        document.getElementById("msg").innerHTML = `<div class="notice err">${esc(e.message)}</div>`;
+      }
     };
     document.getElementById("del").onclick = async () => {
       if (!confirm("이 강의를 삭제할까요?")) return;
-      await api(`/api/courses/${cid}/lectures/${lid}`, {method: "DELETE"});
+      await api(`/api/lectures/${lid}`, {method: "DELETE"});
       location.hash = `#/c/${cid}`;
     };
     return;
   }
 
-  if (l.status === "running") { watchJob(cid, lid, l.job); return; }
-
   // 완료: 노트 보기
-  const md = await api(`/api/courses/${cid}/lectures/${lid}/note`);
+  const md = await api(`/api/lectures/${lid}/note`);
+  track("note_view", lid, cid);
   const om = l.omissions;
-  const omInfo = l.sample ? `<span class="badge sec">샘플 (이전에 만든 노트)</span>`
-    : om && om.length ? `<span class="badge warn" title="${esc(om.map(o => `p.${o.page} ${o.description}`).join("\n"))}">누락 점검: ${om.length}건 보충함</span>`
+  const omInfo = om && om.length
+    ? `<span class="badge warn" title="${esc(om.map(o => `p.${o.page} ${o.description}`).join("\n"))}">누락 점검: ${om.length}건 보충함</span>`
     : `<span class="badge">누락 점검 통과</span>`;
   $view.innerHTML = `
     <div class="toolbar">
       ${back}
       <span class="spacer"></span>
       ${omInfo}
-      ${l.cost_usd != null ? `<span class="pill">비용 $${l.cost_usd}</span>` : ""}
-      <a class="btn small" href="/api/courses/${cid}/lectures/${lid}/source" target="_blank">원본 PDF</a>
+      ${ME.is_admin && l.cost_usd != null ? `<span class="pill">비용 $${l.cost_usd}</span>` : ""}
+      ${sourceLink}
       <button class="btn small" id="dl">마크다운 받기</button>
-      <button class="btn small" onclick="window.print()">인쇄 / PDF 저장</button>
+      <button class="btn small" id="print">인쇄 / PDF 저장</button>
     </div>
     ${l.truncated ? `<div class="notice" style="margin-bottom:14px">출력 길이 한도에 닿아 노트 끝부분이 잘렸을 수 있어요.</div>` : ""}
     <div class="note-layout">
@@ -420,27 +498,30 @@ async function viewLecture(cid, lid) {
     </div>`;
   renderNote(md, document.getElementById("note"), document.getElementById("toc"));
   document.getElementById("dl").onclick = () => {
+    track("note_download", lid, cid);
     const a = document.createElement("a");
     a.href = URL.createObjectURL(new Blob([md], {type: "text/markdown"}));
     a.download = `${l.title}.md`;
     a.click();
   };
+  document.getElementById("print").onclick = () => { track("note_print", lid, cid); window.print(); };
 }
 
-function watchJob(cid, lid, jid) {
+function watchJob(cid, lid) {
   const phases = [["writing", "노트 작성"], ["checking", "누락 점검·보충"], ["done", "완료"]];
   const draw = j => {
-    const idx = phases.findIndex(p => p[0] === j.phase);
+    const phase = j.phase === "queued" ? "writing" : j.phase;
+    const idx = phases.findIndex(p => p[0] === phase);
     $view.innerHTML = `
       <p><a class="btn ghost small" href="#/c/${cid}">← 과목으로</a></p>
       <h1>노트를 만드는 중</h1>
-      <p class="sub">이 화면을 떠나도 생성은 계속돼요. 다 되면 이 강의를 다시 열면 됩니다.</p>
+      <p class="sub">이 화면을 떠나거나 로그아웃해도 생성은 계속돼요. 다 되면 이 강의를 다시 열면 됩니다.</p>
       <div class="card progress">
         ${phases.map(([k, name], i) => `
-          <div class="phase ${i < idx || j.phase === "done" ? "done" : i === idx ? "on" : ""}">
-            ${i === idx && j.phase !== "done" ? '<span class="spinner"></span>' : '<span class="dot"></span>'}
+          <div class="phase ${i < idx ? "done" : i === idx ? "on" : ""}">
+            ${i === idx ? '<span class="spinner"></span>' : '<span class="dot"></span>'}
             ${name}${k === "writing" && j.chars ? ` <span class="pill">— ${j.chars.toLocaleString()}자 작성됨</span>` : ""}
-            ${k === "writing" && j.phase === "writing" && !j.chars ? ` <span class="pill">— 슬라이드를 읽는 중…</span>` : ""}
+            ${k === "writing" && phase === "writing" && !j.chars ? ` <span class="pill">— 슬라이드를 읽는 중…</span>` : ""}
           </div>`).join("")}
       </div>`;
   };
@@ -448,17 +529,18 @@ function watchJob(cid, lid, jid) {
   const tick = async () => {
     if (!location.hash.includes(lid)) { clearInterval(pollTimer); return; }
     try {
-      const j = await api(`/api/jobs/${jid}`);
-      if (j.phase === "done" || j.phase === "error") { clearInterval(pollTimer); refreshUsage(); viewLecture(cid, lid); return; }
+      const j = await api(`/api/lectures/${lid}/progress`);
+      if (j.status !== "running") { clearInterval(pollTimer); viewLecture(cid, lid); return; }
       draw(j);
     } catch (e) {
       clearInterval(pollTimer);
+      if (e instanceof AuthError) { viewAuth(); return; }
       $view.innerHTML = `<p><a class="btn ghost small" href="#/c/${cid}">← 과목으로</a></p><div class="notice err">${esc(e.message)}</div>`;
     }
   };
   draw({phase: "writing", chars: 0});
   tick();
-  pollTimer = setInterval(tick, 2000);
+  pollTimer = setInterval(tick, 3000);
 }
 
 // 마크다운 + 수식: 수식을 먼저 빼 두고(marked가 \ 와 _ 를 바꾸지 않게) 렌더 후 KaTeX로 되돌린다.
@@ -486,25 +568,53 @@ function renderNote(md, el, toc) {
   toc.querySelectorAll("a").forEach(a => a.onclick = () => document.getElementById(a.dataset.id).scrollIntoView({behavior: "smooth", block: "start"}));
 }
 
+// ---------- 관리자 ----------
+const EVENT_NAMES = {signup: "가입", login: "로그인", classify: "유형 판정", course_create: "과목 생성",
+  lecture_upload: "강의 업로드", generate_start: "생성 시작", generate_done: "생성 완료", generate_error: "생성 오류",
+  note_view: "노트 열람", note_download: "마크다운 받기", note_print: "인쇄"};
+const fmtTime = s => s ? new Date(s).toLocaleString("ko-KR", {month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit"}) : "-";
+
+async function viewAdmin() {
+  if (!ME.is_admin) { location.hash = "#/"; return; }
+  const d = await api("/api/admin/overview");
+  $view.innerHTML = `
+    <p><a class="btn ghost small" href="#/">← 내 과목</a></p>
+    <h1>관리자</h1>
+    <p class="sub">사용자 ${d.users.length}명 · 노트 생성 비용 합계 $${d.total_cost_usd}</p>
+    <h2>사용자</h2>
+    <table class="list">
+      <tr><th>이메일</th><th>가입</th><th>최근 활동</th><th class="num">과목</th><th class="num">강의</th><th class="num">노트</th><th class="num">비용</th></tr>
+      ${d.users.map(u => `<tr><td>${esc(u.email)}</td><td class="pill">${fmtTime(u.created_at)}</td><td class="pill">${fmtTime(u.last_seen)}</td>
+        <td class="num">${u.courses}</td><td class="num">${u.lectures}</td><td class="num">${u.notes}</td><td class="num">$${u.cost_usd.toFixed(2)}</td></tr>`).join("")}
+    </table>
+    <h2>최근 사용 기록 (100개)</h2>
+    <table class="list">
+      <tr><th>시각</th><th>사용자</th><th>기록</th><th>내용</th></tr>
+      ${d.events.map(e => `<tr><td class="pill">${fmtTime(e.created_at)}</td><td>${esc(e.email)}</td><td>${esc(EVENT_NAMES[e.type] || e.type)}</td>
+        <td class="pill">${esc(Object.entries(e.data || {}).map(([k, v]) => `${k}: ${v}`).join(" · "))}</td></tr>`).join("")}
+    </table>`;
+}
+
 // ---------- 라우터 ----------
 async function route() {
   clearInterval(pollTimer);
-  const h = location.hash.replace(/^#/, "") || "/";
-  const parts = h.split("/").filter(Boolean);
   try {
+    if (!ME) await loadMe();
+    const parts = (location.hash.replace(/^#/, "") || "/").split("/").filter(Boolean);
     if (parts.length === 0) await viewHome();
     else if (parts[0] === "new") viewNew();
+    else if (parts[0] === "admin") await viewAdmin();
     else if (parts[0] === "c" && parts.length === 2) await viewCourse(parts[1]);
     else if (parts[0] === "c" && parts[2] === "l") await viewLecture(parts[1], parts[3]);
     else await viewHome();
   } catch (e) {
+    if (e instanceof AuthError) { ME = null; viewAuth(); return; }
     $view.innerHTML = `<div class="notice err">${esc(e.message)}</div>`;
   }
   window.scrollTo(0, 0);
 }
 window.addEventListener("hashchange", route);
 route();
-refreshUsage();
 </script>
 </body>
 </html>
