@@ -61,6 +61,7 @@
 7. **테스트 T2 (B1)** — 통계와사회 4장 PPT 43장 → 장별 노트(예제 24개, 수식 LaTeX) → 승인
 8. 모든 단계를 Notion 정리본 DB에 기록
 10. **1단계 엔진 v0 (10-15)** — `scripts/generate_note.py`로 API 자동 생성 3건(4강·5강·통계 4장) → 수동 노트와 본문 유사도 0.81~0.96, 구조 규칙 준수, 누락 없음 (처음에 4강 p.6 누락으로 봤으나 비교 스크립트 오탐으로 정정). 생성 후 **누락 점검 단계** 추가 (T5). 강의 1개당 약 $0.6~1 추정 (`docs/test_log.md` T4)
+16. **과목 유형 안내 + 자료 만족도 평가 (10-15)** — 판정 결과·과목 화면에 "이 과목은 A 서술·해석형 과목입니다" 안내 카드(설명·시험 형태·공부 흐름·지금 받을 수 있는 자료·근거). 노트마다 평가표: 1~5점(전체 유용성 + 완전성·정확성·구성·출처 대조·필기 공간·시간 절약 + 단계별 1개[A1 원문 정확도/B1 수식·예제]), 재사용 의향, 사용 방식, 아낀 시간, 문제 유형, 문제 쪽·좋았던 점·아쉬운 점. DB `feedback`(사용자·과목·강의·단계·유형, 점수 칸별, 강의당 1인 1개 수정 가능) + 요약 view `feedback_by_stage`. 관리자 화면에 단계별 평균·문제 유형·과목별·서술 의견. 정의는 `app/feedback.py`, 표는 `supabase/002_feedback.sql`. 점검 17개 + 기존 28개 통과
 15. **로그인·사용자별 데이터 (10-15)** — Supabase(도쿄, 무료): Auth(이메일+비밀번호, 이메일 인증 없음) + Postgres(profiles·courses·lectures·events, RLS 켜고 정책 없음 → 서버 secret key만 접근) + Storage(lectures 버킷, 비공개). 가입은 초대 코드(INVITE_CODE, 없으면 ACCESS_CODE), 1인 하루 생성 3개(DAILY_LIMIT), 관리자(ADMIN_EMAILS)는 무제한 + 관리자 화면(사용자별 사용량·최근 기록 100개). 사용 기록 events: signup·login·classify·course_create·lecture_upload·generate_start/done/error·note_view/download/print. 점검: 사용자 분리 등 28개 항목 통과, 실제 생성 1회(3장, $0.18) 통과. 표 구조 `supabase/schema.sql`, 로컬 샘플 옮기기 `scripts/import_samples.py <이메일>`
 14. **Render 배포 완료 (10-15)** — https://study-in-univ.onrender.com (무료 요금제, 접속 코드는 Render Environment의 ACCESS_CODE). 점검: 상태 확인·접속 코드·API 키(토큰 세기) 정상. 무료라 재시작·재배포 때 자료 삭제, 잠들면 첫 접속 지연
 13. **클라우드 배포 준비 (10-15)** — Render용 `render.yaml`·`requirements.txt`·`.python-version`(3.13), 저장 위치 `DATA_DIR` 환경변수, 상태 확인 `/healthz`. 깨끗한 복사본으로 실행 시험 통과. Render 가입·키 입력은 사용자가 직접
@@ -103,8 +104,9 @@ STUDY_IN_UNIV/
 ├── run_web.bat                  ← 로컬 웹 미리보기 실행 (http://127.0.0.1:8000)
 ├── render.yaml, requirements.txt, .python-version ← Render 클라우드 배포 설정
 ├── tools/cloudflared.exe        ← 임시 공개 링크용 (git 제외). 실행은 사용자가 직접: tools\cloudflared.exe tunnel --url http://127.0.0.1:8000
-├── supabase/schema.sql          ← DB 표 구조 (Supabase SQL Editor에서 실행)
+├── supabase/schema.sql, 002_feedback.sql ← DB 표 구조 (Supabase SQL Editor에서 순서대로 실행)
 ├── app/
+│   ├── feedback.py              ← 과목 유형 안내 문구 + 자료 평가표 정의
 │   ├── store.py                 ← Supabase 저장 계층 (로그인·과목·강의·PDF·사용 기록)
 │   ├── engine.py                ← 생성 엔진: 유형 판정 / 노트 생성 / 누락 점검·보충 (CLI·웹 공용)
 │   ├── server.py                ← FastAPI 서버, 저장 위치 data/web/ (첫 실행 시 샘플 과목 2개 불러옴)

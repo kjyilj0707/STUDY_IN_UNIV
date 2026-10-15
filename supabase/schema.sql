@@ -67,3 +67,5 @@ alter table public.events enable row level security;
 insert into storage.buckets (id, name, public)
 values ('lectures', 'lectures', false)
 on conflict (id) do nothing;
+
+-- 자료 만족도 평가 표는 supabase/002_feedback.sql (처음부터 만들 때는 이 파일 다음에 실행)

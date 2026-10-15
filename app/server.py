@@ -19,7 +19,7 @@ from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, Res
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from app import engine, store
+from app import engine, feedback, store
 
 STATIC = Path(__file__).parent / "static"
 TMP = Path(tempfile.gettempdir()) / "study-in-univ"
@@ -159,6 +159,9 @@ def pipeline(course_type):
 def decorate(course):
     course["pipeline"] = pipeline(course["primary_type"])
     course["type_name"] = engine.TYPE_NAMES[course["primary_type"]]
+    course["guide"] = feedback.TYPE_GUIDE[course["primary_type"]]
+    course["secondary_guides"] = {t: feedback.TYPE_GUIDE[t] for t in course.get("secondary_types") or []
+                                  if t in feedback.TYPE_GUIDE}
     return course
 
 
@@ -176,7 +179,9 @@ def get_course(cid: str, request: Request):
     if not course:
         raise HTTPException(404, "과목이 없습니다.")
     lectures = store.list_lectures(user["id"], cid, store.LECTURE_LIST_COLUMNS)
+    ratings = store.rated_lectures(user["id"], cid)
     for l in lectures:
+        l["rating"] = ratings.get(l["id"])
         if l["id"] in JOBS:
             l["progress"] = JOBS[l["id"]]
     return decorate({**course, "lectures": lectures})
@@ -365,6 +370,29 @@ def client_event(body: Event, request: Request):
     return {"ok": True}
 
 
+# ---------- 자료 만족도 평가 ----------
+
+@app.get("/api/lectures/{lid}/feedback")
+def get_feedback(lid: str, request: Request):
+    user, lec = owned_lecture(request, lid, "id,stage")
+    return {"form": feedback.form(lec["stage"]), "feedback": store.get_feedback(user["id"], lid)}
+
+
+@app.put("/api/lectures/{lid}/feedback")
+async def save_feedback(lid: str, request: Request):
+    user, lec = owned_lecture(request, lid, "id,stage,status,course_id")
+    if lec["status"] != "done":
+        raise HTTPException(400, "노트가 완성된 뒤에 평가할 수 있어요.")
+    row, missing = feedback.validate(lec["stage"], await request.json())
+    if missing:
+        raise HTTPException(400, "점수 문항에 모두 답해 주세요.")
+    course = store.get_course(user["id"], lec["course_id"])
+    saved = store.save_feedback(user["id"], lec["course_id"], lid, lec["stage"], course["primary_type"], row)
+    store.log_event(user["id"], "feedback_submit", course_id=lec["course_id"], lecture_id=lid,
+                    overall=row["r_overall"], stage=lec["stage"])
+    return saved
+
+
 # ---------- 관리자 ----------
 
 @app.get("/api/admin/overview")
@@ -372,7 +400,7 @@ def admin_overview(request: Request):
     user = require_user(request)
     if not is_admin(user):
         raise HTTPException(403, "관리자만 볼 수 있어요.")
-    return store.admin_overview()
+    return {**store.admin_overview(), "feedback": store.feedback_overview()}
 
 
 app.mount("/static", StaticFiles(directory=STATIC), name="static")

@@ -202,6 +202,73 @@ def generations_today(uid):
     return res.count or 0
 
 
+# ---------- 자료 만족도 평가 ----------
+
+def get_feedback(uid, lid):
+    rows = service().table("feedback").select("*").eq("user_id", uid).eq("lecture_id", lid).execute().data
+    return rows[0] if rows else None
+
+
+def save_feedback(uid, course_id, lid, stage, course_type, row):
+    data = {**row, "user_id": uid, "course_id": course_id, "lecture_id": lid,
+            "stage": stage, "course_type": course_type, "updated_at": now_iso()}
+    return service().table("feedback").upsert(data, on_conflict="user_id,lecture_id").execute().data[0]
+
+
+def rated_lectures(uid, cid):
+    rows = service().table("feedback").select("lecture_id,r_overall").eq("user_id", uid).eq("course_id", cid).execute().data
+    return {r["lecture_id"]: r["r_overall"] for r in rows}
+
+
+def feedback_overview():
+    """관리자용: 단계별 평균, 문제 유형 빈도, 과목별 현황, 최근 서술 의견."""
+    rows = service().table("feedback").select("*").order("updated_at", desc=True).execute().data
+    rating_cols = ["r_overall", "r_completeness", "r_accuracy", "r_structure", "r_traceability",
+                   "r_writing_space", "r_time_saving", "r_stage_specific"]
+    by_stage = {}
+    for r in rows:
+        s = by_stage.setdefault(r["stage"], {"stage": r["stage"], "responses": 0, "reuse_yes": 0,
+                                             "issues": {}, "time_saved": {}, "usage": {}, "_sum": {}, "_n": {}})
+        s["responses"] += 1
+        s["reuse_yes"] += r["reuse"] == "yes"
+        for c in rating_cols:
+            if r.get(c) is not None:
+                s["_sum"][c] = s["_sum"].get(c, 0) + r[c]
+                s["_n"][c] = s["_n"].get(c, 0) + 1
+        for i in r["issues"] or []:
+            s["issues"][i] = s["issues"].get(i, 0) + 1
+        for u in r["usage"] or []:
+            s["usage"][u] = s["usage"].get(u, 0) + 1
+        if r["time_saved"]:
+            s["time_saved"][r["time_saved"]] = s["time_saved"].get(r["time_saved"], 0) + 1
+    for s in by_stage.values():
+        s["averages"] = {c[2:]: round(s["_sum"][c] / s["_n"][c], 2) for c in rating_cols if s["_n"].get(c)}
+        s["reuse_yes_pct"] = round(100 * s["reuse_yes"] / s["responses"], 1)
+        del s["_sum"], s["_n"], s["reuse_yes"]
+
+    course_ids = list({r["course_id"] for r in rows})
+    lecture_ids = list({r["lecture_id"] for r in rows})
+    courses = {c["id"]: c["course_name"] for c in
+               (service().table("courses").select("id,course_name").in_("id", course_ids).execute().data if course_ids else [])}
+    lectures = {l["id"]: l["title"] for l in
+                (service().table("lectures").select("id,title").in_("id", lecture_ids).execute().data if lecture_ids else [])}
+    emails = {p["id"]: p["email"] for p in service().table("profiles").select("id,email").execute().data}
+    by_course = {}
+    for r in rows:
+        c = by_course.setdefault(r["course_id"], {"course": courses.get(r["course_id"], "(삭제됨)"), "course_type": r["course_type"],
+                                                  "responses": 0, "_overall": 0})
+        c["responses"] += 1
+        c["_overall"] += r["r_overall"]
+    for c in by_course.values():
+        c["overall"] = round(c.pop("_overall") / c["responses"], 2)
+    comments = [{"email": emails.get(r["user_id"], "?"), "course": courses.get(r["course_id"], "(삭제됨)"),
+                 "lecture": lectures.get(r["lecture_id"], "(삭제됨)"), "stage": r["stage"], "overall": r["r_overall"],
+                 "best": r["best"], "worst": r["worst"], "issue_pages": r["issue_pages"], "updated_at": r["updated_at"]}
+                for r in rows if r["best"] or r["worst"] or r["issue_pages"]][:30]
+    return {"total": len(rows), "by_stage": list(by_stage.values()), "by_course": list(by_course.values()),
+            "comments": comments}
+
+
 # ---------- 관리자 ----------
 
 def admin_overview():
