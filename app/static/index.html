@@ -58,6 +58,10 @@ a.card:hover { border-color: var(--accent); }
 .step .state { font-size: 12px; color: var(--muted); }
 .step.ready { background: var(--accent-soft); border-color: #b9d2c4; position: relative; z-index: 1; }
 .step.ready .code, .step.ready .state { color: var(--accent); }
+a.step { text-decoration: none; color: inherit; cursor: pointer; transition: background .15s; }
+a.step:hover { background: #f1f1ec; }
+a.step.ready:hover { background: #d9e8df; }
+.step.selected { box-shadow: inset 0 -3px 0 var(--accent); position: relative; z-index: 2; }
 table.list { width: 100%; border-collapse: collapse; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
 table.list td, table.list th { padding: 11px 14px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: middle; }
 table.list th { font-size: 12px; color: var(--muted); font-weight: 600; background: #fafaf8; }
@@ -221,13 +225,16 @@ function typeBadges(c) {
     (c.secondary_types || []).map(t => `<span class="badge sec">+${esc(t)} ${esc(TYPE_NAMES[t])}</span>`).join(" ");
 }
 
-function pipelineHtml(steps) {
-  return `<div class="pipeline">${steps.map(s => `
-    <div class="step ${s.ready ? "ready" : ""}">
+// cid 를 주면 각 단계가 그 단계 화면으로 가는 버튼이 된다
+function pipelineHtml(steps, {cid = null, selected = null} = {}) {
+  return `<div class="pipeline">${steps.map(s => {
+    const cls = `step ${s.ready ? "ready" : ""} ${s.code === selected ? "selected" : ""}`;
+    const inner = `
       <div class="code">${esc(s.code)}</div>
       <div class="label">${esc(s.name)}</div>
-      <div class="state">${s.ready ? "자료 생성 가능" : "준비 중"}</div>
-    </div>`).join("")}</div>`;
+      <div class="state">${s.ready ? "자료 생성 가능" : "준비 중"}</div>`;
+    return cid ? `<a class="${cls}" href="#/c/${cid}/s/${s.code}">${inner}</a>` : `<div class="${cls}">${inner}</div>`;
+  }).join("")}</div>`;
 }
 
 function setupDrop(dropId, fileId, emptyText, onPick) {
@@ -399,9 +406,9 @@ function showClassification(r) {
 // ---------- 과목 ----------
 const STATUS = {ready: "생성 전", running: "생성 중", done: "완료", error: "오류"};
 
-async function viewCourse(cid) {
+async function viewCourse(cid, code = null) {
   const c = await api(`/api/courses/${cid}`);
-  const stage = c.pipeline[0];
+  const stage = c.pipeline.find(s => s.code === code) || c.pipeline.find(s => s.ready) || c.pipeline[0];
   $view.innerHTML = `
     <p><a class="btn ghost small" href="#/">← 내 과목</a></p>
     <div class="row" style="justify-content:space-between">
@@ -413,10 +420,10 @@ async function viewCourse(cid) {
       <button class="btn small ghost" id="delCourse">과목 삭제</button>
     </div>
     ${guideCard(c)}
-    <h2>단계</h2>
-    ${pipelineHtml(c.pipeline)}
+    <h2>단계 <span class="pill" style="font-weight:400">눌러서 단계별 화면으로 이동</span></h2>
+    ${pipelineHtml(c.pipeline, {cid, selected: stage.code})}
     <h2>${esc(stage.code)} ${esc(stage.name)}</h2>
-    ${c.lectures.length ? `
+    ${!stage.ready ? `<div class="card empty">아직 미완성인 단계예요. 곧 열릴 예정이에요.</div>` : c.lectures.length ? `
       <table class="list">
         <tr><th>강의</th><th>주차</th><th>쪽수</th><th>상태</th><th>내 평가</th><th></th></tr>
         ${c.lectures.map(l => `
@@ -444,7 +451,7 @@ async function viewCourse(cid) {
       </div>
       <div class="row"><button class="btn primary" id="upload">올리고 예상 비용 보기</button></div>
       <div id="msg"></div>
-    </div>` : `<div class="notice">${esc(TYPE_NAMES[c.primary_type])} 과목의 자료 생성은 준비 중이에요 (지금은 A 서술·해석형, B 수리·계산형).</div>`}`;
+    </div>` : ""}`;
 
   document.getElementById("delCourse").onclick = async () => {
     if (!confirm(`"${c.course_name}" 과목과 안의 자료를 모두 삭제할까요?`)) return;
@@ -736,6 +743,7 @@ async function route() {
     else if (parts[0] === "new") viewNew();
     else if (parts[0] === "admin") await viewAdmin();
     else if (parts[0] === "c" && parts.length === 2) await viewCourse(parts[1]);
+    else if (parts[0] === "c" && parts[2] === "s") await viewCourse(parts[1], parts[3]);
     else if (parts[0] === "c" && parts[2] === "l") await viewLecture(parts[1], parts[3], parts[4] === "feedback");
     else await viewHome();
   } catch (e) {
