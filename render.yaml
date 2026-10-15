@@ -1,0 +1,22 @@
+# Render 배포 설정 (Blueprint). Render 대시보드 → New → Blueprint → 이 저장소 선택.
+# ANTHROPIC_API_KEY, ACCESS_CODE 는 저장소에 넣지 않고 Render 화면에서 직접 입력한다 (sync: false).
+services:
+  - type: web
+    name: study-in-univ
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.server:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /login
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.13"
+      - key: PYTHONUTF8
+        value: "1"
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: ACCESS_CODE
+        sync: false
+      # 유료 디스크를 붙이면 그 경로로 바꾼다 (예: /var/data). 무료 요금제는 재시작 때 자료가 지워진다.
+      - key: DATA_DIR
+        value: /tmp/study-in-univ

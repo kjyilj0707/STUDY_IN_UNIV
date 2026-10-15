@@ -6,6 +6,7 @@
 """
 import hmac
 import json
+import os
 import shutil
 import threading
 import traceback
@@ -21,7 +22,10 @@ from pydantic import BaseModel
 from app import engine
 
 ROOT = engine.ROOT
-WEB = ROOT / "data" / "web"
+# 클라우드 배포에서는 DATA_DIR(디스크 경로)에 저장한다. 사용량 기록도 같은 곳에 둔다.
+WEB = Path(os.environ["DATA_DIR"]) if os.environ.get("DATA_DIR") else ROOT / "data" / "web"
+if os.environ.get("DATA_DIR"):
+    engine.USAGE_LOG = WEB / "api_usage.jsonl"
 COURSES = WEB / "courses"
 UPLOADS = WEB / "uploads"
 STATIC = Path(__file__).parent / "static"
@@ -144,6 +148,8 @@ def seed_samples():
         return
     for s in SAMPLES:
         src = ROOT / "data" / "courses" / s["dir"]
+        if not src.exists():  # 배포 환경에는 data/courses 가 없다 (저작권 자료라 git 제외)
+            continue
         cid = uuid.uuid4().hex[:8]
         cd = COURSES / cid
         course = {k: s[k] for k in ("course_name", "professor", "semester", "primary_type",
