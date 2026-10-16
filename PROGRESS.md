@@ -70,6 +70,8 @@
 7. **테스트 T2 (B1)** — 통계와사회 4장 PPT 43장 → 장별 노트(예제 24개, 수식 LaTeX) → 승인
 8. 모든 단계를 Notion 정리본 DB에 기록
 10. **1단계 엔진 v0 (10-15)** — `scripts/generate_note.py`로 API 자동 생성 3건(4강·5강·통계 4장) → 수동 노트와 본문 유사도 0.81~0.96, 구조 규칙 준수, 누락 없음 (처음에 4강 p.6 누락으로 봤으나 비교 스크립트 오탐으로 정정). 생성 후 **누락 점검 단계** 추가 (T5). 강의 1개당 약 $0.6~1 추정 (`docs/test_log.md` T4)
+26. **관리자 사용량·요금 페이지 (10-16)** — 사용자 요청 ("토큰 사용량·요금을 실시간으로 그래프로"). `#/admin/usage`: 이번 달 사용액 + 월 예산 막대(`MONTHLY_BUDGET_USD`, 기본 $30, 80%·100%에서 경고색), 오늘·기간 합계, 입력·출력 토큰, 노트 1개 평균 비용, 날짜별 요금(기능별 누적 막대)·날짜별 토큰 그래프(마우스 올리면 값, "표로 보기"), 기능별·사용자별 요금, 지금 생성 중인 노트, 최근 AI 호출 60개. 기간 7·30·90일, **30초마다 자동 갱신**(끌 수 있음). 그래프는 라이브러리 없이 SVG, 색은 dataviz 기준 팔레트(색 검사 통과). 기록 방식: **Claude 호출마다 사용 기록 `api_call`**(기능·토큰·비용·시간·message_id) — 표 변경 없음. 그 전 기록은 classify·generate_done의 비용으로 대신(토큰 일부 없음). 남은 크레딧은 API로 알 수 없어 Console 결제 화면 링크. 조직 계정이면 `ANTHROPIC_ADMIN_KEY`(Admin API)로 공식 청구액 비교 (개인 계정은 Admin API 불가). 로컬 CLI·시험 사용은 `scripts/import_api_usage.py`로 옮김 (message_id로 중복 제외, 10-16 7건 $1.08 옮김). 시험 정리 코드가 사용 기록을 지울 때 api_call은 남기도록 변경 (시험 비용도 기록에 남음, 계정 삭제 후 "(시험·삭제된 계정)")
+25. **관리자 사용자 상세 (10-16)** — 사용자 요청 ("각 유저가 기능을 어떻게 이용했는지 구체적으로"). 개요 표에 로그인·판정·열람·편집·받기·인쇄·평가 횟수 + 사용자 이름 링크 → `#/admin/u/{id}`: 기능 사용 흐름(가입→판정→과목→업로드→노트 완성→열람→편집→받기→인쇄→평가, 횟수와 처음 쓴 시각), 최근 30일 활동 그래프, 강의별 열람·받기·인쇄·필기·편집본 여부·평가·AI 비용, 전체 기록(종류별 거르기). API `GET /api/admin/users/{uid}`, `GET /api/admin/usage?days=`. 점검 `tests/e2e_admin.py` 15개 + headless Chrome 화면 10개(툴팁·휴대폰 폭 포함) + 기존 72개 통과
 24. **글자가 도형인 수업계획서 PDF 판정 (10-16)** — 사용자 제보: 전북대 포털 강의계획서(`경제학.pdf`, 한컴 PDF 1.3)가 "수업계획서 내용을 읽지 못했습니다"로 거절됨. 원인: 한컴 PDF가 글자를 모두 벡터 도형(선)으로 그려 텍스트 레이어 0자. 해결: 글자 추출이 50자 미만이면 PDF를 그대로 Claude에 보내 페이지 이미지로 판정하고, 같은 호출에서 수업계획서 전문(`syllabus_text`)도 글자로 받아 과목에 저장 (`engine.classify_syllabus(pdf_path=)`, 20쪽 초과는 거절). Claude API 오류(크레딧 부족 등)는 "Internal Server Error" 대신 503 + 안내 문구. 강의 PDF 업로드도 예상 비용 계산(count_tokens)이 크레딧 부족으로 실패하면 "PDF를 읽지 못했습니다"로 잘못 보였음 → 같은 AI 오류 안내로. 실제 판정: 경제학의이해 C → B, 주차 15개, 전문 4,165자, **$0.22 · 약 60초** (텍스트 판정 $0.09의 2배 이상). 점검 `e2e_types.py --live-pdf <PDF>` 3개 추가, 시험 클라이언트 대기 60→180초. 기존 점검 72개 통과. 이 과정에서 API 크레딧 소진 발견 → 사용자 충전
 23. **A·B 유형으로 서비스 (10-16)** — 사용자 결정. 유형 판정 스키마에 service_type(A/B)·service_reason 추가, 서버가 primary_type을 A·B로 바꾸고 judged_type을 함께 돌려줌. 판정 화면에 "판정은 C … 가장 가까운 A로 자료를 만들어요 (근거)" 안내, 유형 선택지는 A·B만. 과목 만들 때도 서버가 A·B만 저장. 표 변경 없음. 실제 판정 1회: 경영학원론 C → A (주관식 시험·이론·사례 중심, $0.086). 점검 `tests/e2e_types.py` 8개(--live 포함) + 기존 통과
 22. **사용자 프로필 (10-16)** — 사용자 요청. 홈 위쪽 프로필 카드(사진·이름·"학교 · 학과 · N학년 · 나이세" + 프로필 수정), 머리글에 사진·이름(누르면 `#/profile`), 프로필 화면에서 이름·학교·학과·학년(1~6·대학원·기타)·나이·사진. 모든 칸 선택. DB: `supabase/003_profile.sql`로 profiles에 칸 추가 (10-16 사용자 실행 완료). 사진은 화면에서 가운데 정사각형 256px JPEG로 줄여(위치 등 사진 정보 제거) Storage `{user}/avatar.jpg` 비공개 저장, 서버가 JPG/PNG 파일 앞부분·2MB 확인, `/api/profile/avatar?v=시각`으로 본인만 봄. API `GET/PUT /api/profile`, `PUT/GET/DELETE /api/profile/avatar`, `/api/me`에 profile 포함, 사용 기록 `profile_update`. 점검 `tests/e2e_profile.py` 12개 + 기존 55개 + headless Chrome 화면 점검 통과
@@ -139,9 +141,10 @@ STUDY_IN_UNIV/
 │   └── templates/
 │       ├── A1_강의노트.md       ← A 1단계 생성 규칙 v1
 │       └── B1_장별노트.md       ← B 1단계 생성 규칙 v1
-├── tests/                       ← 점검 스크립트: e2e_auth(로그인·분리 28개), e2e_feedback(평가 17개), e2e_generate(실제 생성 1회 약 $0.2), e2e_memos(필기 저장 10개), e2e_profile(프로필 12개), e2e_types(A·B 서비스 5개, --live 판정 1회 약 $0.1, --live-pdf 글자 없는 PDF 판정 1회 약 $0.22). 시험 서버(8020) 먼저 실행
+├── tests/                       ← 점검 스크립트: e2e_admin(관리자 상세·사용량 15개, 시험 서버를 ADMIN_EMAILS=siu-test-admin@example.com 로 켬), e2e_auth(로그인·분리 28개), e2e_feedback(평가 17개), e2e_generate(실제 생성 1회 약 $0.2), e2e_memos(필기 저장 10개), e2e_profile(프로필 12개), e2e_types(A·B 서비스 5개, --live 판정 1회 약 $0.1, --live-pdf 글자 없는 PDF 판정 1회 약 $0.22). 시험 서버(8020) 먼저 실행
 ├── scripts/
 │   ├── build_academic_dataset.py  ← 대화 내보내기 + 라벨 → data/processed/
+│   ├── import_api_usage.py        ← 이 컴퓨터의 logs/api_usage.jsonl → 사이트 사용 기록(api_call)으로 옮기기 (중복 제외)
 │   ├── generate_note.py           ← 1단계 엔진: PDF → Claude API + 생성 규칙 → 마크다운 (--dry-run: 비용 추정)
 │   ├── compare_notes.py           ← 수동 vs 자동 노트 비교
 │   └── extract_syllabus_pdf.py    ← 포털 수업계획서 PDF → 텍스트
@@ -213,6 +216,7 @@ python -I -X utf8 scripts/compare_notes.py 기준.md 자동.md
 - 친구 평가가 쌓이면: 낮은 지표부터 규칙 수정 → 다시 생성 → 점수 비교
 - A1·B1 반복 검증 (다음 주차, 회계 표·분개, 동양철학 개념 강의, 스크립트·필기 버전)
 - 다음 단계 규칙: **A2 작품·원문 가이드, B2 계산 원리·유도 노트** 먼저 (손으로 만들기 → 승인 → 규칙 → 자동화 → 버튼 열기). A3부터는 강의 **범위 선택** 기능 먼저
+- 사용량 페이지: CLI로 노트를 만들었으면 `python -X utf8 scripts/import_api_usage.py`로 옮기기. Render Environment에 `MONTHLY_BUDGET_USD`(월 예산) 넣으면 예산 막대 기준 변경
 - 저장 보완(제안): 탭을 닫을 때 남은 필기·편집을 바로 저장 (`fetch keepalive`/`sendBeacon`) — 사용자 결정 대기
 - 확인 못 한 것: 판정 결과 화면의 "C → A" 안내(브라우저), 아이폰 HEIC 사진 업로드
 - 화면: **기존 과목 유형 바꾸기**(지금은 만들 때만 선택 가능), C·D·E 판정 시 "자료 생성 준비 중" 안내 강화, C1 장별 노트 열기 검토(경영학원론), 다시 만들기(필기·편집본 칸 맞추기 포함), 단계 완료 체크, 휴대폰 점검, 유형 수정 여부 기록, 업로드 저작권 안내, 탈퇴·비밀번호 찾기

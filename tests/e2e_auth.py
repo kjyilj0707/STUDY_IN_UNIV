@@ -149,7 +149,7 @@ finally:
     profiles = store.service().table("profiles").select("id,email").execute().data
     for p in profiles:
         if p["email"] in emails:
-            store.service().table("events").delete().eq("user_id", p["id"]).execute()
+            store.service().table("events").delete().eq("user_id", p["id"]).neq("type", "api_call").execute()  # API 비용 기록은 남긴다
             store.service().auth.admin.delete_user(p["id"])
     left = [p for p in store.service().table("profiles").select("email").execute().data if p["email"] in emails]
     print("시험 계정 정리:", "완료" if not left else f"남음 {left}")

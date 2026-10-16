@@ -70,7 +70,7 @@ finally:
     for p in store.service().table("profiles").select("id,email").execute().data:
         if p["email"] in emails:
             store.service().storage.from_(store.BUCKET).remove([store.avatar_path(p["id"])])
-            store.service().table("events").delete().eq("user_id", p["id"]).execute()
+            store.service().table("events").delete().eq("user_id", p["id"]).neq("type", "api_call").execute()  # API 비용 기록은 남긴다
             store.service().auth.admin.delete_user(p["id"])
     print("시험 계정 정리 완료")
     print(f"\n결과: {sum(results)}/{len(results)} 통과")

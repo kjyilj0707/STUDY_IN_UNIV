@@ -7,11 +7,14 @@
 - 생성은 몇 분 걸리므로 스레드로 돌리고, 화면은 /api/lectures/{lid}/progress 를 폴링한다.
 """
 import hmac
+import json
 import os
 import tempfile
 import threading
 import time
 import traceback
+import urllib.request
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import anthropic
@@ -51,6 +54,13 @@ async def ai_error(request: Request, e: anthropic.APIStatusError):
     traceback.print_exception(e)
     return JSONResponse({"detail": f"AI 서버 호출에 실패했습니다 (오류 {e.status_code}). 잠시 뒤 다시 시도하고, 계속되면 관리자에게 알려 주세요."},
                         status_code=503)
+
+
+def log_api(uid, rec, course_id=None, lecture_id=None):
+    """Claude 호출 1번 = 사용 기록 api_call 1개 (관리자 사용량 페이지가 이것으로 토큰·비용을 센다)."""
+    keep = ("kind", "model", "input_tokens", "output_tokens", "cost_usd", "seconds", "stop_reason", "source", "template",
+            "pages", "message_id")
+    store.log_event(uid, "api_call", course_id=course_id, lecture_id=lecture_id, **{k: rec[k] for k in keep if k in rec})
 
 
 # ---------- 로그인 처리 ----------
@@ -315,6 +325,7 @@ def classify(request: Request, file: UploadFile | None = File(None), text: str =
     result["primary_type"] = engine.served_type(judged, result.pop("service_type", None))
     if result["primary_type"] == judged:
         result["service_reason"] = ""
+    log_api(user["id"], record)
     store.log_event(user["id"], "classify", primary_type=result["primary_type"], judged_type=judged,
                     course_name=result["course_name"], cost_usd=record["cost_usd"])
     return {"result": decorate(result), "syllabus_text": text, "cost_usd": record["cost_usd"]}
@@ -417,9 +428,11 @@ def run_generation(uid, lec, course):
         pdf.write_bytes(store.download_pdf(lec["pdf_path"]))
         job["phase"] = "writing"
         note, rec = engine.generate_note(lec["stage"], pdf, label, lec["week"] or "(미상)", on_text=on_text)
+        log_api(uid, rec, course["id"], lid)
         store.update_lecture(lid, {"note": note})
         job["phase"] = "checking"
         omissions, rec2 = engine.check_omissions(lec["stage"], pdf, note)
+        log_api(uid, rec2, course["id"], lid)
         note, results = engine.apply_omissions(note, omissions)
         cost = round(rec["cost_usd"] + rec2["cost_usd"], 3)
         store.update_lecture(lid, {"status": "done", "note": note, "omissions": results, "cost_usd": cost,
@@ -582,7 +595,110 @@ def admin_overview(request: Request):
     user = require_user(request)
     if not is_admin(user):
         raise HTTPException(403, "관리자만 볼 수 있어요.")
-    return {**store.admin_overview(), "feedback": store.feedback_overview()}
+    return {**store.admin_overview(), "feedback": store.feedback_overview(), "event_counts": store.event_counts()}
+
+
+def require_admin(request):
+    user = require_user(request)
+    if not is_admin(user):
+        raise HTTPException(403, "관리자만 볼 수 있어요.")
+    return user
+
+
+@app.get("/api/admin/users/{uid}")
+def admin_user(uid: str, request: Request):
+    require_admin(request)
+    d = store.admin_user(uid)
+    if not d:
+        raise HTTPException(404, "사용자가 없습니다.")
+    return d
+
+
+MONTHLY_BUDGET = float(engine.env_value("MONTHLY_BUDGET_USD") or 30)
+_official_cache = {}  # Anthropic 공식 비용 보고서 (1분 캐시: 문서 권장 조회 간격)
+
+
+def official_costs(days):
+    """Admin API 키(ANTHROPIC_ADMIN_KEY, sk-ant-admin…)가 있으면 Anthropic 공식 일별 비용을 가져온다.
+    개인 계정은 Admin API를 쓸 수 없다 → 없으면 None. 보고서 금액은 센트 단위 문자열."""
+    key = engine.env_value("ANTHROPIC_ADMIN_KEY")
+    if not key:
+        return None
+    hit = _official_cache.get(days)
+    if hit and time.time() - hit[0] < 60:
+        return hit[1]
+    start = (datetime.now(timezone.utc) - timedelta(days=days - 1)).strftime("%Y-%m-%dT00:00:00Z")
+    url = f"https://api.anthropic.com/v1/organizations/cost_report?starting_at={start}&limit={min(days, 31)}"
+    req = urllib.request.Request(url, headers={"x-api-key": key, "anthropic-version": "2023-06-01",
+                                               "user-agent": "STUDY_IN_UNIV/1.0"})
+    try:
+        with urllib.request.urlopen(req, timeout=20) as res:
+            body = json.loads(res.read())
+        result = {"days": [{"day": b["starting_at"][:10],
+                            "cost_usd": round(sum(float(r["amount"]) for r in b["results"]) / 100, 4)}
+                           for b in body["data"]], "error": None}
+    except Exception as e:  # 키가 틀리거나 권한이 없으면 화면에 이유만 보여 준다
+        result = {"days": [], "error": str(e)[:200]}
+    _official_cache[days] = (time.time(), result)
+    return result
+
+
+@app.get("/api/admin/usage")
+def admin_usage(request: Request, days: int = 30):
+    """사용량·요금 페이지: 기간 안의 Claude 호출을 날짜·기능·사용자별로 묶는다 (날짜는 한국 시간)."""
+    require_admin(request)
+    days = max(1, min(days, 365))
+    now = datetime.now(store.KST)
+    start = (now - timedelta(days=days - 1)).replace(hour=0, minute=0, second=0, microsecond=0)
+    month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    since = min(start, month_start).astimezone(timezone.utc).isoformat()
+    all_calls = store.api_calls(since)
+    calls = [c for c in all_calls if c["day"] >= start.date().isoformat()]
+    emails = {p["id"]: p["email"] for p in store.service().table("profiles").select("id,email").execute().data}
+
+    day_list = [(start + timedelta(days=i)).date().isoformat() for i in range(days)]
+    daily = {d: {"day": d, "cost": {}, "input_tokens": 0, "output_tokens": 0, "calls": 0} for d in day_list}
+    by_user, by_kind = {}, {}
+    for c in calls:
+        d = daily.get(c["day"])
+        if d:
+            d["cost"][c["kind"]] = round(d["cost"].get(c["kind"], 0) + c["cost_usd"], 4)
+            d["input_tokens"] += c["input_tokens"]
+            d["output_tokens"] += c["output_tokens"]
+            d["calls"] += 1
+        u = by_user.setdefault(c["user_id"], {"email": emails.get(c["user_id"], "(시험·삭제된 계정)"), "user_id": c["user_id"],
+                                               "cost_usd": 0, "calls": 0, "input_tokens": 0, "output_tokens": 0})
+        k = by_kind.setdefault(c["kind"], {"kind": c["kind"], "cost_usd": 0, "calls": 0, "input_tokens": 0, "output_tokens": 0})
+        for agg in (u, k):
+            agg["cost_usd"] += c["cost_usd"]
+            agg["calls"] += 1
+            agg["input_tokens"] += c["input_tokens"]
+            agg["output_tokens"] += c["output_tokens"]
+    for agg in [*by_user.values(), *by_kind.values()]:
+        agg["cost_usd"] = round(agg["cost_usd"], 4)
+
+    today = now.date().isoformat()
+    month = sum(c["cost_usd"] for c in all_calls if c["time"] >= month_start.astimezone(timezone.utc).isoformat())
+    for c in calls:
+        c["email"] = emails.get(c["user_id"], "(시험·삭제된 계정)")
+    running = [{"lecture_id": lid, **job} for lid, job in JOBS.items()]
+    return {
+        "days": days, "now": now.isoformat(),
+        "totals": {"period_usd": round(sum(c["cost_usd"] for c in calls), 4),
+                   "today_usd": round(sum(c["cost_usd"] for c in calls if c["day"] == today), 4),
+                   "month_usd": round(month, 4), "calls": len(calls),
+                   "input_tokens": sum(c["input_tokens"] for c in calls),
+                   "output_tokens": sum(c["output_tokens"] for c in calls),
+                   "legacy_calls": sum(c["legacy"] for c in calls)},
+        "budget_usd": MONTHLY_BUDGET,
+        "daily": list(daily.values()),
+        "by_user": sorted(by_user.values(), key=lambda u: -u["cost_usd"]),
+        "by_kind": sorted(by_kind.values(), key=lambda k: -k["cost_usd"]),
+        "recent": list(reversed(calls))[:60],
+        "running": running,
+        "official": official_costs(days),
+        "prices": engine.PRICE_PER_MTOK, "model": engine.MODEL,
+    }
 
 
 app.mount("/static", StaticFiles(directory=STATIC), name="static")

@@ -67,6 +67,6 @@ finally:
         if p["email"] == email:
             for c in store.list_courses(p["id"]):
                 store.delete_course(p["id"], c["id"])
-            store.service().table("events").delete().eq("user_id", p["id"]).execute()
+            store.service().table("events").delete().eq("user_id", p["id"]).neq("type", "api_call").execute()  # API 비용 기록은 남긴다
             store.service().auth.admin.delete_user(p["id"])
             print("시험 계정 정리 완료")

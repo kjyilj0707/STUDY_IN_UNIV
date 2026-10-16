@@ -387,3 +387,98 @@ def admin_overview():
         e["email"] = emails.get(e["user_id"], "(탈퇴·알 수 없음)")
     total = round(sum(u["cost_usd"] for u in users.values()), 2)
     return {"users": list(users.values()), "events": events, "total_cost_usd": total}
+
+
+def _paged(query, page=1000, cap=50000):
+    """Supabase는 한 번에 1,000행까지만 준다 → 나눠서 모두 가져온다. query는 매번 새 질의를 만드는 함수."""
+    out = []
+    while len(out) < cap:
+        rows = query().range(len(out), len(out) + page - 1).execute().data
+        out += rows
+        if len(rows) < page:
+            break
+    return out
+
+
+def event_counts():
+    """관리자 사용자 표용: 사용자별·기록 종류별 개수."""
+    counts = {}
+    for e in _paged(lambda: service().table("events").select("user_id,type")):
+        u = counts.setdefault(e["user_id"], {})
+        u[e["type"]] = u.get(e["type"], 0) + 1
+    return counts
+
+
+def admin_user(uid):
+    """관리자용: 한 사용자가 기능을 어떻게 썼는지 (프로필·과목·강의별 활동·전체 기록)."""
+    prof = service().table("profiles").select("*").eq("id", uid).execute().data
+    if not prof:
+        return None
+    courses = service().table("courses").select("id,course_name,professor,semester,primary_type,created_at") \
+        .eq("user_id", uid).order("created_at").execute().data
+    lectures = service().table("lectures").select("id,course_id,title,week,stage,pages,status,cost_usd,error,created_at,finished_at") \
+        .eq("user_id", uid).order("created_at").execute().data
+    events = _paged(lambda: service().table("events").select("type,data,created_at,course_id,lecture_id")
+                    .eq("user_id", uid).order("created_at", desc=True))
+    ratings = {r["lecture_id"]: r["r_overall"] for r in
+               service().table("feedback").select("lecture_id,r_overall").eq("user_id", uid).execute().data}
+    try:
+        files = {f["name"] for f in service().storage.from_(BUCKET).list(uid, {"limit": 1000})}
+    except Exception:
+        files = set()
+
+    per_lecture = {}
+    for e in events:
+        if e["lecture_id"]:
+            c = per_lecture.setdefault(e["lecture_id"], {})
+            c[e["type"]] = c.get(e["type"], 0) + 1
+            if e["type"] == "api_call":
+                c["api_cost"] = round(c.get("api_cost", 0) + float(e["data"].get("cost_usd") or 0), 4)
+    for l in lectures:
+        l["activity"] = per_lecture.get(l["id"], {})
+        l["rating"] = ratings.get(l["id"])
+        l["has_memos"] = f"{l['id']}.memos.json" in files
+        l["has_edited"] = f"{l['id']}.edited.json" in files
+    names = {c["id"]: c["course_name"] for c in courses}
+    lec_names = {l["id"]: l["title"] for l in lectures}
+    for e in events:
+        e["course"] = names.get(e["course_id"], "")
+        e["lecture"] = lec_names.get(e["lecture_id"], "")
+    counts = {}
+    for e in events:
+        counts[e["type"]] = counts.get(e["type"], 0) + 1
+    return {"profile": {**prof[0], "has_avatar": "avatar.jpg" in files}, "courses": courses, "lectures": lectures,
+            "events": events, "counts": counts}
+
+
+# ---------- API 사용량 ----------
+
+def _kst_day(iso):
+    return datetime.fromisoformat(iso.replace("Z", "+00:00")).astimezone(KST).date().isoformat()
+
+
+def api_calls(since):
+    """since(UTC ISO) 이후 Claude 호출 기록. api_call 기록이 생기기 전(2026-10-16 이전)은
+    classify·generate_done 기록의 비용으로 대신한다 (토큰은 generate_done에만 있음)."""
+    rows = _paged(lambda: service().table("events").select("user_id,type,data,created_at,course_id,lecture_id")
+                  .in_("type", ["api_call", "classify", "generate_done"]).gte("created_at", since).order("created_at"))
+    # 기준 시각 = 서버가 처음 남긴 api_call (옮겨 온 로컬 기록은 예전 시각이라 제외)
+    first_api = (service().table("events").select("created_at").eq("type", "api_call").is_("data->>imported", "null")
+                 .order("created_at").limit(1).execute().data)
+    cutover = first_api[0]["created_at"] if first_api else None
+    calls = []
+    for r in rows:
+        d = r["data"] or {}
+        if r["type"] == "api_call":
+            kind = d.get("kind", "?")
+        elif cutover and r["created_at"] >= cutover:
+            continue  # api_call로 이미 기록됨
+        else:
+            kind = "classify" if r["type"] == "classify" else "generate+check"
+        calls.append({"time": r["created_at"], "day": _kst_day(r["created_at"]), "user_id": r["user_id"],
+                      "kind": kind, "legacy": r["type"] != "api_call",
+                      "input_tokens": int(d.get("input_tokens") or 0), "output_tokens": int(d.get("output_tokens") or 0),
+                      "cost_usd": float(d.get("cost_usd") or 0), "seconds": d.get("seconds"),
+                      "model": d.get("model", ""), "source": d.get("source") or d.get("template") or "",
+                      "course_id": r["course_id"], "lecture_id": r["lecture_id"]})
+    return calls

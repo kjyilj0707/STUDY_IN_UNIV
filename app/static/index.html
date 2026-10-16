@@ -201,6 +201,65 @@ header.top .me a.who { display: inline-flex; gap: 8px; align-items: center; text
 .profile-card .pmeta { color: var(--muted); font-size: 14px; }
 .form input[type=number] { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; background: #fff; width: 100%; }
 @media (max-width: 640px) { header.top .me .email { display: none; } header.top .tag { display: none; } }
+
+/* 관리자: 사용량·요금 / 사용자 상세 (그래프 색은 dataviz 기준 팔레트, 검사 통과) */
+:root { --s1: #2a78d6; --s2: #eb6834; --s3: #1baf7a; --s4: #eda100; --s6: #008300; --s7: #6250d6;
+  --grid: #ecebe6; --meter-track: #e6efe9; }
+.admin-nav { display: flex; gap: 6px; flex-wrap: wrap; margin: 0 0 18px; }
+.admin-nav a.on { border-color: var(--accent); color: var(--accent); font-weight: 600; }
+.filters { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin: 0 0 16px; }
+.filters .btn.on { background: var(--accent-soft); border-color: #b9d2c4; color: var(--accent); font-weight: 600; }
+.filters .live { margin-left: auto; font-size: 13px; color: var(--muted); display: flex; gap: 6px; align-items: center; }
+.live-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--s6); display: inline-block; }
+.live-dot.off { background: #c9c8c1; }
+.tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 12px; }
+.tile { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px 16px; }
+.tile .k { font-size: 13px; color: var(--muted); }
+.tile .v { font-size: 24px; font-weight: 600; letter-spacing: -0.01em; margin-top: 2px; }
+.tile .d { font-size: 12px; color: var(--muted); }
+.tile.hero { grid-column: span 2; }
+.tile.hero .v { font-size: 48px; line-height: 1.1; }
+.meter { height: 10px; border-radius: 99px; background: var(--meter-track); margin-top: 10px; overflow: hidden; }
+.meter > div { height: 100%; border-radius: 99px; background: var(--accent); }
+.meter.warn { background: var(--warn-soft); } .meter.warn > div { background: var(--warn); }
+.meter.over { background: #f8e6e3; } .meter.over > div { background: var(--danger); }
+.chart-card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px 18px; margin-bottom: 14px; }
+.chart-card h3 { margin: 0; font-size: 15px; }
+.chart-card .cap { font-size: 13px; color: var(--muted); margin: 2px 0 8px; }
+.legend { display: flex; gap: 14px; flex-wrap: wrap; font-size: 13px; color: var(--muted); margin-bottom: 6px; }
+.legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; }
+svg.chart { display: block; width: 100%; height: auto; overflow: visible; }
+svg.chart text { font-size: 11px; fill: var(--muted); font-variant-numeric: tabular-nums; }
+svg.chart .gridline { stroke: var(--grid); stroke-width: 1; }
+svg.chart .hit { fill: transparent; cursor: default; }
+svg.chart .hit:hover + g rect, svg.chart g.col:hover rect { opacity: .82; }
+.tip { position: fixed; z-index: 50; pointer-events: none; background: var(--surface); border: 1px solid var(--line); border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0,0,0,.08); padding: 8px 10px; font-size: 13px; min-width: 140px; display: none; }
+.tip .t { color: var(--muted); font-size: 12px; margin-bottom: 4px; }
+.tip .r { display: flex; gap: 8px; align-items: center; justify-content: space-between; }
+.tip .r b { font-variant-numeric: tabular-nums; }
+.tip .r span { display: flex; align-items: center; gap: 6px; color: var(--muted); }
+.tip .r span i { width: 10px; height: 2px; display: inline-block; }
+.hbar { display: grid; grid-template-columns: minmax(120px, 220px) 1fr auto; gap: 10px; align-items: center; font-size: 14px; padding: 4px 0; }
+.hbar .track { height: 14px; }
+.hbar .fill { height: 14px; border-radius: 0 4px 4px 0; background: var(--s1); min-width: 2px; }
+.hbar .val { font-variant-numeric: tabular-nums; color: var(--ink); font-size: 13px; }
+.two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+@media (max-width: 760px) { .two-col { grid-template-columns: 1fr; } .tile.hero { grid-column: auto; } .tile.hero .v { font-size: 36px; } }
+table.list td.num, table.list th.num { text-align: right; font-variant-numeric: tabular-nums; }
+.funnel { display: grid; grid-template-columns: repeat(auto-fill, minmax(118px, 1fr)); gap: 8px; }
+.funnel .stepx { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; background: var(--surface); }
+.funnel .stepx.done { background: var(--accent-soft); border-color: #b9d2c4; }
+.funnel .stepx .n { font-size: 20px; font-weight: 600; }
+.funnel .stepx .l { font-size: 13px; color: var(--muted); }
+.flag { font-size: 12px; border-radius: 6px; padding: 0 6px; background: #eeeeea; color: var(--muted); margin-right: 3px; white-space: nowrap; }
+.flag.on { background: var(--accent-soft); color: var(--accent); }
+.scroll-x { overflow-x: auto; }
+.ell { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* 휴대폰: 그래프·표는 글자가 읽히는 폭을 지키고 칸 안에서 가로로 민다 */
+.chart-scroll { overflow-x: auto; }
+.chart-scroll svg.chart { min-width: 560px; }
+.scroll-x > table.list { min-width: 680px; }
 </style>
 </head>
 <body>
@@ -1085,38 +1144,324 @@ function feedbackAdmin(f) {
 }
 const fmtTime = s => s ? new Date(s).toLocaleString("ko-KR", {month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit"}) : "-";
 
+EVENT_NAMES.api_call = "AI 호출";
+const KINDS = [  // 색은 기능(종류)을 따라간다. 순서 고정
+  {key: "classify", name: "유형 판정", color: "var(--s1)"},
+  {key: "generate", name: "노트 생성", color: "var(--s2)"},
+  {key: "check", name: "누락 점검", color: "var(--s3)"},
+  {key: "generate+check", name: "생성+점검 (이전 기록)", color: "var(--s4)"},
+];
+const kindName = k => (KINDS.find(x => x.key === k) || {name: k}).name;
+const usd = v => "$" + (+v || 0).toFixed(v && Math.abs(v) < 0.1 ? 3 : 2);
+const compact = n => n >= 1e6 ? (n / 1e6).toFixed(n >= 1e7 ? 0 : 1) + "M" : n >= 1e3 ? (n / 1e3).toFixed(n >= 1e4 ? 0 : 1) + "K" : String(Math.round(n));
+const dayLabel = d => `${+d.slice(5, 7)}/${+d.slice(8, 10)}`;
+const kstDay = iso => new Date(iso).toLocaleDateString("sv-SE", {timeZone: "Asia/Seoul"});
+
+function adminNav(on) {
+  const items = [["#/admin", "개요", "overview"], ["#/admin/usage", "사용량·요금", "usage"]];
+  return `<p><a class="btn ghost small" href="#/">← 내 과목</a></p>
+    <nav class="admin-nav">${items.map(([h, l, k]) => `<a class="btn small ${k === on ? "on" : ""}" href="${h}">${l}</a>`).join("")}</nav>`;
+}
+
+// ---------- 그래프 (SVG, 외부 라이브러리 없이) ----------
+let TIP = null;
+function tip() {
+  if (!TIP) { TIP = document.createElement("div"); TIP.className = "tip"; document.body.appendChild(TIP); }
+  return TIP;
+}
+// rows: [{label, color?, value}] — 글자는 textContent로만 넣는다
+function showTip(ev, title, rows) {
+  const t = tip();
+  t.replaceChildren();
+  const h = document.createElement("div"); h.className = "t"; h.textContent = title; t.appendChild(h);
+  for (const r of rows) {
+    const row = document.createElement("div"); row.className = "r";
+    const name = document.createElement("span");
+    if (r.color) { const k = document.createElement("i"); k.style.background = r.color; name.appendChild(k); }
+    name.appendChild(document.createTextNode(r.label));
+    const val = document.createElement("b"); val.textContent = r.value;
+    row.append(name, val); t.appendChild(row);
+  }
+  t.style.display = "block";
+  t.style.left = Math.min(ev.clientX + 14, innerWidth - t.offsetWidth - 8) + "px";
+  t.style.top = Math.min(ev.clientY + 14, innerHeight - t.offsetHeight - 8) + "px";
+}
+function hideTip() { if (TIP) TIP.style.display = "none"; }
+
+function niceMax(v) {
+  if (!(v > 0)) return 1;
+  const p = Math.pow(10, Math.floor(Math.log10(v))), m = v / p;
+  return (m <= 1 ? 1 : m <= 2 ? 2 : m <= 2.5 ? 2.5 : m <= 5 ? 5 : 10) * p;
+}
+
+// 날짜별 누적 세로 막대. series: [{key,name,color}], value(i,key) → 숫자. 날짜 칸 전체가 마우스 대상
+function stackedColumns(el, {labels, series, value, fmt, fmtAxis}) {
+  const W = 720, H = 220, L = 52, R = 8, T = 10, B = 24;
+  const n = labels.length, band = (W - L - R) / n, bw = Math.max(3, Math.min(24, band * 0.62));
+  const totals = labels.map((_, i) => series.reduce((a, s) => a + (value(i, s.key) || 0), 0));
+  const max = niceMax(Math.max(...totals));
+  const y = v => T + (H - T - B) * (1 - v / max);
+  const every = Math.ceil(n / 8);
+  let svg = [0, .25, .5, .75, 1].map(f => f * max).map(t => `<line class="gridline" x1="${L}" x2="${W - R}" y1="${y(t)}" y2="${y(t)}"/>
+    <text x="${L - 6}" y="${y(t) + 4}" text-anchor="end">${esc((fmtAxis || fmt)(t))}</text>`).join("");
+  labels.forEach((lab, i) => {
+    const cx = L + band * i + band / 2, x0 = cx - bw / 2;
+    // 날짜 글자는 몇 칸마다 + 마지막 날. 마지막 날과 너무 가까운 칸은 건너뛴다 (겹침 방지)
+    if (i === n - 1 || (i % every === 0 && n - 1 - i >= every * 0.75)) svg += `<text x="${cx}" y="${H - 6}" text-anchor="middle">${esc(dayLabel(lab))}</text>`;
+    let base = H - B, parts = "";
+    const segs = series.map(s => ({s, v: value(i, s.key) || 0})).filter(x => x.v > 0);
+    segs.forEach((x, j) => {
+      const h = (H - T - B) * x.v / max, top = base - h;
+      const gap = j > 0 ? 2 : 0;  // 쌓인 칸 사이 2px 띄움
+      const hh = Math.max(1, h - gap);
+      if (j === segs.length - 1) {  // 맨 위 칸만 끝을 둥글게 (4px)
+        const r = Math.min(4, hh / 2, bw / 2), b = base - gap;
+        parts += `<path style="fill:${x.s.color}" d="M${x0},${b} V${top + r} Q${x0},${top} ${x0 + r},${top} H${x0 + bw - r} Q${x0 + bw},${top} ${x0 + bw},${top + r} V${b} Z"/>`;
+      } else parts += `<rect style="fill:${x.s.color}" x="${x0}" y="${top}" width="${bw}" height="${hh}"/>`;
+      base = top;
+    });
+    svg += `<g class="col">${parts}<rect class="hit" data-i="${i}" x="${L + band * i}" y="${T}" width="${band}" height="${H - T - B}"/></g>`;
+  });
+  el.innerHTML = `<svg class="chart" viewBox="0 0 ${W} ${H}" role="img">${svg}</svg>`;
+  el.scrollLeft = el.scrollWidth;  // 좁은 화면에서는 최근 날짜(오른쪽)부터 보이게
+  el.querySelectorAll(".hit").forEach(h => {
+    const i = +h.dataset.i;
+    const rows = () => [...series.map(s => ({label: s.name, color: s.color, value: fmt(value(i, s.key) || 0)})),
+                        ...(series.length > 1 ? [{label: "합계", value: fmt(totals[i])}] : [])];
+    h.addEventListener("pointermove", ev => showTip(ev, labels[i], rows()));
+    h.addEventListener("pointerleave", hideTip);
+  });
+}
+
+function legendHtml(series) {
+  return `<div class="legend">${series.map(s => `<span><i style="background:${s.color}"></i>${esc(s.name)}</span>`).join("")}</div>`;
+}
+
+function hbars(items, fmt) {
+  const max = Math.max(...items.map(i => i.value), 0) || 1;
+  return items.map(i => `<div class="hbar">${i.href ? `<a class="title ell" href="${i.href}">${esc(i.label)}</a>` : `<span class="ell">${esc(i.label)}</span>`}
+    <div class="track"><div class="fill" style="width:${i.value / max * 100}%"></div></div><span class="val">${esc(fmt(i.value))}</span></div>`).join("");
+}
+
+function eventDetail(e) {
+  const d = e.data || {};
+  if (e.type === "api_call") return `${kindName(d.kind)} · 입력 ${compact(d.input_tokens || 0)} · 출력 ${compact(d.output_tokens || 0)} 토큰 · ${usd(d.cost_usd)}${d.seconds != null ? ` · ${d.seconds}초` : ""}`;
+  const names = {primary_type: "유형", judged_type: "판정", course_name: "과목", cost_usd: "비용", pages: "쪽", size_kb: "KB", seconds: "초",
+    omissions: "보충", input_tokens: "입력 토큰", output_tokens: "출력 토큰", overall: "점수", stage: "단계", error: "오류", service_reason: "근거"};
+  return Object.entries(d).filter(([, v]) => v !== "" && v != null).map(([k, v]) => `${names[k] || k}: ${k === "cost_usd" ? usd(v) : v}`).join(" · ");
+}
+
+// ---------- 관리자: 개요 ----------
 async function viewAdmin() {
   if (!ME.is_admin) { location.hash = "#/"; return; }
   const d = await api("/api/admin/overview");
+  const c = (u, t) => (d.event_counts[u.id] || {})[t] || 0;
   $view.innerHTML = `
-    <p><a class="btn ghost small" href="#/">← 내 과목</a></p>
+    ${adminNav("overview")}
     <h1>관리자</h1>
-    <p class="sub">사용자 ${d.users.length}명 · 노트 생성 비용 합계 $${d.total_cost_usd}</p>
+    <p class="sub">사용자 ${d.users.length}명 · 노트 생성 비용 합계 $${d.total_cost_usd} · 사용자를 누르면 기능을 어떻게 썼는지 자세히 볼 수 있어요</p>
     <h2>사용자</h2>
-    <table class="list">
-      <tr><th>이메일</th><th>가입</th><th>최근 활동</th><th class="num">과목</th><th class="num">강의</th><th class="num">노트</th><th class="num">비용</th></tr>
-      ${d.users.map(u => `<tr><td>${esc(u.email)}</td><td class="pill">${fmtTime(u.created_at)}</td><td class="pill">${fmtTime(u.last_seen)}</td>
-        <td class="num">${u.courses}</td><td class="num">${u.lectures}</td><td class="num">${u.notes}</td><td class="num">$${u.cost_usd.toFixed(2)}</td></tr>`).join("")}
-    </table>
+    <div class="scroll-x"><table class="list">
+      <tr><th>사용자</th><th>가입</th><th>최근 활동</th><th class="num">로그인</th><th class="num">판정</th><th class="num">과목</th><th class="num">강의</th>
+        <th class="num">노트</th><th class="num">열람</th><th class="num">편집</th><th class="num">받기·인쇄</th><th class="num">평가</th><th class="num">비용</th></tr>
+      ${d.users.map(u => `<tr><td><a class="title" href="#/admin/u/${u.id}">${esc(u.display_name || u.email)}</a>${u.display_name ? `<br><span class="pill">${esc(u.email)}</span>` : ""}</td>
+        <td class="pill">${fmtTime(u.created_at)}</td><td class="pill">${fmtTime(u.last_seen)}</td>
+        <td class="num">${c(u, "login")}</td><td class="num">${c(u, "classify")}</td><td class="num">${u.courses}</td><td class="num">${u.lectures}</td>
+        <td class="num">${u.notes}</td><td class="num">${c(u, "note_view")}</td><td class="num">${c(u, "note_edit")}</td>
+        <td class="num">${c(u, "note_download") + c(u, "note_print")}</td><td class="num">${c(u, "feedback_submit")}</td><td class="num">$${u.cost_usd.toFixed(2)}</td></tr>`).join("")}
+    </table></div>
     <h2>자료 만족도 (평가 ${d.feedback.total}개)</h2>
     ${feedbackAdmin(d.feedback)}
     <h2>최근 사용 기록 (100개)</h2>
     <table class="list">
       <tr><th>시각</th><th>사용자</th><th>기록</th><th>내용</th></tr>
-      ${d.events.map(e => `<tr><td class="pill">${fmtTime(e.created_at)}</td><td>${esc(e.email)}</td><td>${esc(EVENT_NAMES[e.type] || e.type)}</td>
-        <td class="pill">${esc(Object.entries(e.data || {}).map(([k, v]) => `${k}: ${v}`).join(" · "))}</td></tr>`).join("")}
+      ${d.events.map(e => `<tr><td class="pill">${fmtTime(e.created_at)}</td><td>${e.user_id ? `<a class="title" href="#/admin/u/${e.user_id}">${esc(e.email)}</a>` : esc(e.email)}</td>
+        <td>${esc(EVENT_NAMES[e.type] || e.type)}</td><td class="pill">${esc(eventDetail(e))}</td></tr>`).join("")}
     </table>`;
+}
+
+// ---------- 관리자: 사용자 상세 ----------
+const FLOW = [["signup", "가입"], ["classify", "유형 판정"], ["course_create", "과목 만들기"], ["lecture_upload", "강의 올리기"],
+  ["generate_done", "노트 완성"], ["note_view", "노트 열람"], ["note_edit", "노트 편집"], ["note_download", "마크다운 받기"],
+  ["note_print", "인쇄"], ["feedback_submit", "자료 평가"]];
+const LEC_STATUS = {ready: "생성 전", running: "생성 중", done: "완료", error: "오류"};
+
+async function viewAdminUser(uid) {
+  if (!ME.is_admin) { location.hash = "#/"; return; }
+  const d = await api(`/api/admin/users/${encodeURIComponent(uid)}`);
+  const p = d.profile, ev = d.events, cnt = d.counts;
+  const acts = ev.filter(e => e.type !== "api_call");
+  const firstAt = t => { const x = ev.filter(e => e.type === t); return x.length ? x[x.length - 1].created_at : null; };
+  const apiCost = ev.filter(e => e.type === "api_call").reduce((a, e) => a + (+e.data.cost_usd || 0), 0);
+  const days = [];
+  for (let i = 29; i >= 0; i--) days.push(kstDay(Date.now() - i * 864e5));
+  const perDay = {};
+  acts.forEach(e => { const k = kstDay(e.created_at); perDay[k] = (perDay[k] || 0) + 1; });
+  const types = [...new Set(ev.map(e => e.type))];
+  const courseName = Object.fromEntries(d.courses.map(c => [c.id, c.course_name]));
+  const emptyCourses = d.courses.filter(c => !d.lectures.some(l => l.course_id === c.id));
+
+  $view.innerHTML = `
+    ${adminNav("")}
+    <h1>${esc(p.display_name || p.email)}</h1>
+    <p class="sub">${esc(p.email)}${profileSummary(p) ? " · " + profileSummary(p) : ""} · 가입 ${fmtTime(p.created_at)}${p.has_avatar ? " · 사진 있음" : ""}</p>
+    <div class="tiles">
+      <div class="tile"><div class="k">기록 전체</div><div class="v">${acts.length}</div><div class="d">최근 ${fmtTime(acts[0]?.created_at)}</div></div>
+      <div class="tile"><div class="k">로그인</div><div class="v">${cnt.login || 0}</div></div>
+      <div class="tile"><div class="k">과목 · 강의</div><div class="v">${d.courses.length} · ${d.lectures.length}</div><div class="d">노트 완성 ${d.lectures.filter(l => l.status === "done").length}</div></div>
+      <div class="tile"><div class="k">AI 비용</div><div class="v">${usd(apiCost)}</div><div class="d">호출 ${cnt.api_call || 0}번 (10-16 이후 기록)</div></div>
+    </div>
+    <h2>기능 사용 흐름</h2>
+    <p class="sub">기능마다 쓴 횟수와 처음 쓴 시각. 흐린 칸은 아직 안 쓴 기능이에요</p>
+    <div class="funnel">${FLOW.map(([t, l]) => `<div class="stepx ${cnt[t] ? "done" : ""}"><div class="l">${l}</div><div class="n">${cnt[t] || 0}</div><div class="pill">${cnt[t] ? fmtTime(firstAt(t)) : "-"}</div></div>`).join("")}</div>
+    <div class="chart-card" style="margin-top:14px"><h3>최근 30일 활동</h3><p class="cap">하루 기록 수 (AI 호출 제외, 한국 시간)</p><div id="u-act" class="chart-scroll"></div></div>
+    <h2>과목·강의별 사용</h2>
+    <div class="scroll-x"><table class="list">
+      <tr><th>과목 · 강의</th><th>상태</th><th class="num">쪽</th><th class="num">열람</th><th class="num">받기</th><th class="num">인쇄</th><th>필기·편집</th><th class="num">평가</th><th class="num">AI 비용</th></tr>
+      ${d.lectures.map(l => { const a = l.activity; return `<tr>
+        <td>${esc(courseName[l.course_id] || "(삭제됨)")}<br><span class="pill">${esc(l.week || "")} ${esc(l.title)} · ${esc(l.stage)}</span></td>
+        <td>${esc(LEC_STATUS[l.status] || l.status)}${l.error ? `<br><span class="pill">${esc(l.error.slice(0, 60))}</span>` : ""}</td>
+        <td class="num">${l.pages ?? "-"}</td><td class="num">${a.note_view || 0}</td><td class="num">${a.note_download || 0}</td><td class="num">${a.note_print || 0}</td>
+        <td><span class="flag ${l.has_memos ? "on" : ""}">필기</span><span class="flag ${l.has_edited ? "on" : ""}">편집본</span></td>
+        <td class="num">${l.rating ? "★" + l.rating : "-"}</td><td class="num">${l.cost_usd != null ? usd(+l.cost_usd) : a.api_cost ? usd(a.api_cost) : "-"}</td></tr>`; }).join("") || `<tr><td colspan="9" class="empty">강의가 없어요</td></tr>`}
+    </table></div>
+    ${emptyCourses.length ? `<p class="pill">강의 없는 과목: ${emptyCourses.map(c => `${esc(c.course_name)} (${esc(c.primary_type)})`).join(", ")}</p>` : ""}
+    <h2>전체 기록 (${ev.length}개)</h2>
+    <div class="filters"><select id="u-type" class="btn small"><option value="">모든 기록</option>${types.map(t => `<option value="${esc(t)}">${esc(EVENT_NAMES[t] || t)} (${cnt[t]})</option>`).join("")}</select></div>
+    <div id="u-events"></div>`;
+
+  stackedColumns(document.getElementById("u-act"), {labels: days, series: [{key: "n", name: "기록", color: "var(--s1)"}],
+    value: i => perDay[days[i]] || 0, fmt: v => `${Math.round(v)}개`, fmtAxis: v => Number.isInteger(v) ? String(v) : ""});
+  const draw = () => {
+    const t = document.getElementById("u-type").value;
+    const rows = ev.filter(e => !t || e.type === t).slice(0, 500);
+    document.getElementById("u-events").innerHTML = `<table class="list"><tr><th>시각</th><th>기록</th><th>과목 · 강의</th><th>내용</th></tr>
+      ${rows.map(e => `<tr><td class="pill">${fmtTime(e.created_at)}</td><td>${esc(EVENT_NAMES[e.type] || e.type)}</td>
+        <td class="pill">${esc([e.course, e.lecture].filter(Boolean).join(" · "))}</td><td class="pill">${esc(eventDetail(e))}</td></tr>`).join("")}</table>
+      ${rows.length === 500 ? `<p class="pill">최근 500개만 보여요</p>` : ""}`;
+  };
+  document.getElementById("u-type").onchange = draw;
+  draw();
+}
+
+// ---------- 관리자: 사용량·요금 ----------
+let usageDays = 30, usageLive = true;
+try { usageDays = +localStorage.getItem("siu_usage_days") || 30; usageLive = localStorage.getItem("siu_usage_live") !== "0"; } catch {}
+
+async function viewUsage() {
+  if (!ME.is_admin) { location.hash = "#/"; return; }
+  if (!document.getElementById("usage-root")) {
+    $view.innerHTML = `${adminNav("usage")}
+      <h1>사용량·요금</h1>
+      <p class="sub">이 서비스가 Claude API를 부를 때마다 남긴 기록으로 센 토큰과 요금이에요. 날짜는 한국 시간</p>
+      <div class="filters" id="usage-filters"></div>
+      <div id="usage-root"></div>`;
+  }
+  const root = document.getElementById("usage-root");
+  if (root.childElementCount) root.style.opacity = .55;  // 다시 불러오는 동안 이전 화면을 흐리게 유지
+  const d = await api(`/api/admin/usage?days=${usageDays}`);
+  if (location.hash !== "#/admin/usage" || !document.getElementById("usage-root")) return;  // 그사이 다른 화면으로 이동
+  root.style.opacity = 1;
+  renderUsageFilters(d);
+  const t = d.totals, budgetPct = d.budget_usd ? t.month_usd / d.budget_usd * 100 : 0;
+  const meterCls = budgetPct >= 100 ? "over" : budgetPct >= 80 ? "warn" : "";
+  const used = new Set(d.daily.flatMap(x => Object.keys(x.cost)));
+  const kinds = [...KINDS.filter(k => used.has(k.key)),
+    ...[...used].filter(k => !KINDS.some(x => x.key === k)).map(k => ({key: k, name: k, color: "#e87ba4"}))];
+  const gen = d.by_kind.find(k => k.kind === "generate"), chk = d.by_kind.find(k => k.kind === "check");
+  const perNote = gen ? (gen.cost_usd + (chk ? chk.cost_usd : 0)) / gen.calls : null;
+  const tokenSeries = [{key: "input_tokens", name: "입력 토큰", color: "var(--s7)"}, {key: "output_tokens", name: "출력 토큰 (생각 포함)", color: "var(--s6)"}];
+  const off = d.official;
+  const offSum = off && !off.error ? off.days.reduce((a, x) => a + x.cost_usd, 0) : null;
+
+  root.innerHTML = `
+    <div class="tiles">
+      <div class="tile hero"><div class="k">이번 달 사용 (${new Date(d.now).getMonth() + 1}월)</div><div class="v">${usd(t.month_usd)}</div>
+        <div class="meter ${meterCls}"><div style="width:${Math.min(100, budgetPct)}%"></div></div>
+        <div class="d">월 예산 ${usd(d.budget_usd)}의 ${budgetPct.toFixed(0)}%${budgetPct >= 100 ? " · ⚠ 예산 초과" : budgetPct >= 80 ? " · ⚠ 80% 넘음" : ""}</div></div>
+      <div class="tile"><div class="k">오늘</div><div class="v">${usd(t.today_usd)}</div></div>
+      <div class="tile"><div class="k">최근 ${d.days}일</div><div class="v">${usd(t.period_usd)}</div><div class="d">호출 ${t.calls}번</div></div>
+      <div class="tile"><div class="k">입력 토큰</div><div class="v">${compact(t.input_tokens)}</div><div class="d">${usd(t.input_tokens * d.prices.input / 1e6)} · 100만당 $${d.prices.input}</div></div>
+      <div class="tile"><div class="k">출력 토큰</div><div class="v">${compact(t.output_tokens)}</div><div class="d">${usd(t.output_tokens * d.prices.output / 1e6)} · 100만당 $${d.prices.output}</div></div>
+      <div class="tile"><div class="k">노트 1개 평균</div><div class="v">${perNote != null ? usd(perNote) : "-"}</div><div class="d">생성 + 누락 점검</div></div>
+    </div>
+    ${d.running.length ? `<div class="notice ok" style="margin-top:14px"><span class="live-dot"></span> 지금 노트 ${d.running.length}개 생성 중 — ${d.running.map(r => `${r.phase === "checking" ? "누락 점검" : r.phase === "writing" ? "작성" : "대기"} · ${r.chars.toLocaleString()}자 작성`).join(" / ")}</div>` : ""}
+    <div class="chart-card" style="margin-top:14px">
+      <h3>날짜별 요금</h3><p class="cap">하루 비용을 기능별로 쌓았어요 (USD). 막대에 마우스를 올리면 금액이 나와요</p>
+      ${legendHtml(kinds.length ? kinds : KINDS.slice(0, 3))}
+      <div id="ch-cost" class="chart-scroll"></div>
+      <details style="margin-top:8px"><summary class="pill" style="cursor:pointer">표로 보기</summary>
+        <div class="scroll-x"><table class="list" style="margin-top:8px"><tr><th>날짜</th>${kinds.map(k => `<th class="num">${esc(k.name)}</th>`).join("")}<th class="num">합계</th><th class="num">호출</th><th class="num">입력 토큰</th><th class="num">출력 토큰</th></tr>
+        ${d.daily.filter(x => x.calls).reverse().map(x => `<tr><td>${x.day}</td>${kinds.map(k => `<td class="num">${x.cost[k.key] ? usd(x.cost[k.key]) : "-"}</td>`).join("")}
+          <td class="num">${usd(Object.values(x.cost).reduce((a, b) => a + b, 0))}</td><td class="num">${x.calls}</td><td class="num">${x.input_tokens.toLocaleString()}</td><td class="num">${x.output_tokens.toLocaleString()}</td></tr>`).join("") || `<tr><td colspan="9" class="empty">기록 없음</td></tr>`}</table></div></details>
+    </div>
+    <div class="chart-card">
+      <h3>날짜별 토큰</h3><p class="cap">입력(보낸 PDF·규칙)과 출력(생각 + 만든 글). 출력이 1토큰당 5배 비싸요</p>
+      ${legendHtml(tokenSeries)}<div id="ch-tok" class="chart-scroll"></div>
+    </div>
+    <div class="two-col">
+      <div class="chart-card"><h3>기능별 요금</h3><p class="cap">최근 ${d.days}일</p>
+        ${d.by_kind.length ? hbars(d.by_kind.map(k => ({label: `${kindName(k.kind)} (${k.calls}번)`, value: k.cost_usd})), usd) : `<p class="empty">기록 없음</p>`}</div>
+      <div class="chart-card"><h3>사용자별 요금</h3><p class="cap">최근 ${d.days}일 · 누르면 그 사용자 상세</p>
+        ${d.by_user.length ? hbars(d.by_user.map(u => ({label: u.email, value: u.cost_usd, href: u.user_id ? `#/admin/u/${u.user_id}` : ""})), usd) : `<p class="empty">기록 없음</p>`}</div>
+    </div>
+    <div class="chart-card">
+      <h3>남은 크레딧 · 공식 청구액</h3>
+      ${!off ? `<p class="cap" style="margin:6px 0 0">위 숫자는 이 서비스가 직접 센 값이에요 (Opus 5.5 가격으로 계산). <b>남은 크레딧</b>과 실제 청구액은
+          <a href="https://platform.claude.com/settings/billing" target="_blank" rel="noopener">Console 결제 화면</a>,
+          모든 사용(로컬 시험·Console 포함)은 <a href="https://platform.claude.com/usage" target="_blank" rel="noopener">Console 사용량 화면</a>에서 확인하세요.
+          조직(Organization) 계정이면 Admin API 키를 Render 환경변수 <code>ANTHROPIC_ADMIN_KEY</code>에 넣어 공식 금액을 여기서 함께 볼 수 있어요 (개인 계정은 Admin API를 쓸 수 없음).</p>`
+        : off.error ? `<p class="notice err">공식 금액을 가져오지 못했어요: ${esc(off.error)}</p>`
+        : `<p class="cap" style="margin:6px 0 0">Anthropic 공식 최근 ${Math.min(d.days, 31)}일 ${usd(offSum)} · 이 서비스 기록 ${usd(t.period_usd)}. 차이는 서비스 밖 사용(Console·로컬 시험)이나 최대 5분 반영 지연 때문이에요</p>`}
+    </div>
+    <h2>최근 AI 호출</h2>
+    <div class="scroll-x"><table class="list">
+      <tr><th>시각</th><th>사용자</th><th>기능</th><th class="num">입력</th><th class="num">출력</th><th class="num">요금</th><th class="num">걸린 시간</th><th>비고</th></tr>
+      ${d.recent.map(c => `<tr><td class="pill">${fmtTime(c.time)}</td><td>${c.user_id ? `<a class="title" href="#/admin/u/${c.user_id}">${esc(c.email)}</a>` : esc(c.email)}</td>
+        <td>${esc(kindName(c.kind))}</td><td class="num">${c.input_tokens ? c.input_tokens.toLocaleString() : "-"}</td><td class="num">${c.output_tokens ? c.output_tokens.toLocaleString() : "-"}</td>
+        <td class="num">${usd(c.cost_usd)}</td><td class="num">${c.seconds != null ? c.seconds + "초" : "-"}</td>
+        <td class="pill">${esc([c.source, c.legacy ? "이전 기록(토큰 일부 없음)" : ""].filter(Boolean).join(" · "))}</td></tr>`).join("") || `<tr><td colspan="8" class="empty">기록 없음</td></tr>`}
+    </table></div>`;
+
+  stackedColumns(document.getElementById("ch-cost"), {labels: d.daily.map(x => x.day), series: kinds.length ? kinds : KINDS.slice(0, 1),
+    value: (i, k) => d.daily[i].cost[k] || 0, fmt: usd, fmtAxis: v => "$" + (v < 1 ? v.toFixed(2) : Number.isInteger(v) ? v : v.toFixed(1))});
+  stackedColumns(document.getElementById("ch-tok"), {labels: d.daily.map(x => x.day), series: tokenSeries,
+    value: (i, k) => d.daily[i][k], fmt: v => Math.round(v).toLocaleString(), fmtAxis: compact});
+
+  // 실시간: 30초마다 다시 불러온다 (다른 화면으로 가면 라우터가 타이머를 멈춤)
+  clearInterval(pollTimer);
+  if (usageLive) pollTimer = setInterval(() => { if (location.hash === "#/admin/usage") viewUsage().catch(() => {}); }, 30000);
+}
+
+function renderUsageFilters(d) {
+  const el = document.getElementById("usage-filters");
+  const at = new Date(d.now).toLocaleTimeString("ko-KR", {hour: "2-digit", minute: "2-digit", second: "2-digit"});
+  el.innerHTML = [7, 30, 90].map(n => `<button class="btn small ${n === usageDays ? "on" : ""}" data-days="${n}">최근 ${n}일</button>`).join("") +
+    `<button class="btn small ghost" id="usage-refresh">새로고침</button>
+     <label class="live"><span class="live-dot ${usageLive ? "" : "off"}"></span><input type="checkbox" id="usage-live" ${usageLive ? "checked" : ""}> 30초마다 자동 갱신 · ${at}</label>`;
+  el.querySelectorAll("[data-days]").forEach(b => b.onclick = () => {
+    usageDays = +b.dataset.days; try { localStorage.setItem("siu_usage_days", usageDays); } catch {}
+    viewUsage();
+  });
+  document.getElementById("usage-refresh").onclick = () => viewUsage();
+  document.getElementById("usage-live").onchange = e => {
+    usageLive = e.target.checked; try { localStorage.setItem("siu_usage_live", usageLive ? "1" : "0"); } catch {}
+    viewUsage();
+  };
 }
 
 // ---------- 라우터 ----------
 async function route() {
   clearInterval(pollTimer);
+  hideTip();
   try {
     if (!ME) await loadMe();
     const parts = (location.hash.replace(/^#/, "") || "/").split("/").filter(Boolean);
     if (parts.length === 0) await viewHome();
     else if (parts[0] === "new") viewNew();
     else if (parts[0] === "profile") await viewProfile();
+    else if (parts[0] === "admin" && parts[1] === "usage") await viewUsage();
+    else if (parts[0] === "admin" && parts[1] === "u") await viewAdminUser(parts[2]);
     else if (parts[0] === "admin") await viewAdmin();
     else if (parts[0] === "c" && parts.length === 2) await viewCourse(parts[1]);
     else if (parts[0] === "c" && parts[2] === "s") await viewCourse(parts[1], parts[3]);
