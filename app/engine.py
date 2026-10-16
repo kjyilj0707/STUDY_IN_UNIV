@@ -403,13 +403,31 @@ def syllabus_text_from_pdf(pdf_path):
     return text.strip()
 
 
-def classify_syllabus(text):
+# 글자가 도형(선)으로 그려진 PDF(예: 한컴 PDF로 저장한 전북대 포털 강의계획서)는 텍스트 레이어가 0자다.
+# 이때는 PDF를 그대로 보내 페이지 이미지로 판정하고, 수업계획서 전문도 같은 호출에서 글자로 옮겨 받는다.
+CLASSIFY_PDF_SCHEMA = {
+    **CLASSIFY_SCHEMA,
+    "properties": {**CLASSIFY_SCHEMA["properties"], "syllabus_text": {"type": "string"}},
+    "required": CLASSIFY_SCHEMA["required"] + ["syllabus_text"],
+}
+CLASSIFY_PDF_NOTE = """- syllabus_text: 첨부 PDF의 수업계획서 내용을 빠짐없이 글자 그대로 옮긴 전문 (표는 "항목: 값" 줄로, 체크 표시는 ☑/☐로)
+- 첨부 PDF는 글자가 도형으로 그려져 텍스트 레이어가 없다. 페이지 이미지를 기준으로 읽어라."""
+
+
+def classify_syllabus(text="", pdf_path=None):
+    """text로 판정한다. text 없이 pdf_path만 주면 PDF를 페이지 이미지로 읽어 판정하고 result["syllabus_text"]에 전문을 담는다."""
+    if pdf_path:
+        prompt = CLASSIFY_PROMPT.format(text="(첨부한 PDF)") + "\n\n" + CLASSIFY_PDF_NOTE
+        content = [pdf_block(pdf_path), {"type": "text", "text": prompt}]
+        schema = CLASSIFY_PDF_SCHEMA
+    else:
+        content, schema = CLASSIFY_PROMPT.format(text=text[:60000]), CLASSIFY_SCHEMA
     start = time.time()
     msg = stream_message(
         max_tokens=16000,
-        output_config={"effort": "medium", "format": {"type": "json_schema", "schema": CLASSIFY_SCHEMA}},
+        output_config={"effort": "medium", "format": {"type": "json_schema", "schema": schema}},
         system=(ROOT / "docs" / "course_types_v0.md").read_text(encoding="utf-8"),
-        messages=[{"role": "user", "content": CLASSIFY_PROMPT.format(text=text[:60000])}],
+        messages=[{"role": "user", "content": content}],
     )
-    record = log_usage("classify", "syllabus", msg, time.time() - start)
+    record = log_usage("classify", "syllabus", msg, time.time() - start, source="pdf_image" if pdf_path else "text")
     return json.loads(message_text(msg)), record

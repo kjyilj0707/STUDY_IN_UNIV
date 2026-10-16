@@ -15,7 +15,7 @@ class Client:
             headers["content-type"] = ctype
         r = urllib.request.Request(BASE + path, data=data, method=method, headers=headers)
         try:
-            with self.op.open(r, timeout=60) as res:
+            with self.op.open(r, timeout=180) as res:  # 이미지 판정은 1분 가까이 걸린다
                 body = res.read()
                 return res.status, (json.loads(body) if res.headers.get("content-type", "").startswith("application/json") else body)
         except urllib.error.HTTPError as e:

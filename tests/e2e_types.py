@@ -2,8 +2,9 @@
 
 실행: 시험 서버를 먼저 켠다 (STUDY_IN_UNIV 폴더에서)
   INVITE_CODE=test-invite python -X utf8 -m uvicorn app.server:app --port 8020
-그다음: python -X utf8 tests/e2e_types.py [--live <수업계획서 텍스트 파일>]
+그다음: python -X utf8 tests/e2e_types.py [--live <수업계획서 텍스트 파일>] [--live-pdf <글자가 도형인 수업계획서 PDF>]
 --live: 실제 유형 판정 1회 (Claude API 약 $0.1). 시험 계정은 끝나면 삭제된다.
+--live-pdf: 텍스트 레이어가 없는 PDF(한컴 PDF 등)를 올려 페이지 이미지 판정 1회 (약 $0.1~0.2)
 """
 import sys
 from pathlib import Path
@@ -15,7 +16,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "tests"))
 from app import engine, store  # noqa: E402
-from e2e_lib import Client  # noqa: E402
+from e2e_lib import Client, multipart  # noqa: E402
 
 results = []
 
@@ -58,6 +59,18 @@ try:
         check("실제 판정: 서비스 유형은 A·B", s == 200 and res["primary_type"] in ("A", "B"), str(r)[:200] if s != 200 else "")
         check("실제 판정: 원래 판정 유형 함께 옴", res.get("judged_type") in engine.PIPELINES)
         check("실제 판정: 단계 1 생성 가능", res.get("pipeline", [{}])[0].get("ready") is True)
+
+    if "--live-pdf" in sys.argv:
+        pdf = Path(sys.argv[sys.argv.index("--live-pdf") + 1])
+        data, ct = multipart({"text": ""}, {"file": ("syllabus.pdf", pdf.read_bytes())})
+        s, r = A.req("POST", "/api/classify", data, ct)
+        res = r["result"] if s == 200 else {}
+        print(f"  [PDF] {res.get('course_name')} · 판정 {res.get('judged_type')} → 서비스 {res.get('primary_type')} · "
+              f"평가 {res.get('evaluation')} · 주차 {len(res.get('weeks', []))}개 · 전문 {len(r.get('syllabus_text', '')) if s == 200 else 0}자 · "
+              f"${r.get('cost_usd') if s == 200 else '-'}")
+        check("글자 없는 PDF: 판정 성공", s == 200 and res["primary_type"] in ("A", "B"), str(r)[:200] if s != 200 else "")
+        check("글자 없는 PDF: 수업계획서 전문을 글자로 받아 옴", s == 200 and len(r["syllabus_text"]) >= 200)
+        check("글자 없는 PDF: 결과에 전문 칸이 섞이지 않음", "syllabus_text" not in res)
 finally:
     for c in store.list_courses(uid) if "uid" in dir() else []:
         store.delete_course(uid, c["id"])

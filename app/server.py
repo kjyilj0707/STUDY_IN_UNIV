@@ -14,6 +14,8 @@ import time
 import traceback
 from pathlib import Path
 
+import anthropic
+import pypdf
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, Response
 from fastapi.staticfiles import StaticFiles
@@ -41,6 +43,14 @@ try:
     store.fail_interrupted_jobs()
 except Exception as e:  # 설정이 없으면 화면에서 안내한다
     print("Supabase 연결 확인 실패:", e)
+
+
+@app.exception_handler(anthropic.APIStatusError)
+async def ai_error(request: Request, e: anthropic.APIStatusError):
+    """Claude API 오류(크레딧 부족·한도 초과 등)를 'Internal Server Error' 대신 알아볼 수 있는 안내로."""
+    traceback.print_exception(e)
+    return JSONResponse({"detail": f"AI 서버 호출에 실패했습니다 (오류 {e.status_code}). 잠시 뒤 다시 시도하고, 계속되면 관리자에게 알려 주세요."},
+                        status_code=503)
 
 
 # ---------- 로그인 처리 ----------
@@ -279,16 +289,26 @@ def get_course(cid: str, request: Request):
 def classify(request: Request, file: UploadFile | None = File(None), text: str = Form("")):
     """수업계획서 PDF 또는 붙여넣은 텍스트 → 유형 판정 결과 (아직 과목을 만들지 않음)."""
     user = require_user(request)
+    result = None
     if file is not None and file.filename:
         tmp = TMP / f"syllabus_{user['id']}_{int(time.time())}.pdf"
         tmp.write_bytes(file.file.read())
         try:
             text = engine.syllabus_text_from_pdf(tmp)
+            if len(text.strip()) < 50:
+                # 글자가 도형으로 그려진 PDF → 페이지 이미지로 판정하고 전문도 받아 온다
+                if not tmp.read_bytes().startswith(b"%PDF") or len(pypdf.PdfReader(tmp).pages) > 20:
+                    raise HTTPException(400, "수업계획서 내용을 읽지 못했습니다. 텍스트를 직접 붙여넣어 주세요.")
+                result, record = engine.classify_syllabus(pdf_path=tmp)
+                text = result.pop("syllabus_text", "")
+        except pypdf.errors.PdfReadError:
+            raise HTTPException(400, "PDF 파일을 열지 못했습니다. 텍스트를 직접 붙여넣어 주세요.")
         finally:
             tmp.unlink(missing_ok=True)
-    if len(text.strip()) < 50:
-        raise HTTPException(400, "수업계획서 내용을 읽지 못했습니다. 텍스트를 직접 붙여넣어 주세요.")
-    result, record = engine.classify_syllabus(text)
+    if result is None:
+        if len(text.strip()) < 50:
+            raise HTTPException(400, "수업계획서 내용을 읽지 못했습니다. 텍스트를 직접 붙여넣어 주세요.")
+        result, record = engine.classify_syllabus(text)
     # 판정 유형(judged_type)은 남기고, 자료를 만들 유형(primary_type)은 A·B 중 가까운 쪽으로
     judged = result["primary_type"]
     result["judged_type"] = judged
@@ -353,6 +373,8 @@ def add_lecture(cid: str, request: Request, file: UploadFile = File(...), title:
     tmp.write_bytes(data)
     try:
         est = engine.estimate_cost(stage, tmp)
+    except anthropic.APIStatusError:
+        raise  # 크레딧 부족 등 AI 서버 오류는 PDF 탓이 아니다 → ai_error 안내로
     except Exception as e:
         raise HTTPException(400, f"PDF를 읽지 못했습니다: {e}")
     finally:
