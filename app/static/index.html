@@ -117,10 +117,8 @@ table.list a.title:hover { text-decoration: underline; }
   background: repeating-linear-gradient(transparent, transparent 31px, #ecebe6 31px, #ecebe6 32px); background-attachment: local; }
 .note blockquote.space:focus-within { border-color: var(--accent); }
 .note[contenteditable="true"] { outline: none; }
-.paper.editing { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
 .editbar { position: sticky; top: 56px; z-index: 5; display: flex; flex-wrap: wrap; gap: 6px; align-items: center;
   background: var(--surface); border: 1px solid var(--accent); border-radius: var(--radius); padding: 8px 10px; margin-bottom: 10px; }
-.editbar[hidden] { display: none; }
 .editbar .btn { min-width: 34px; justify-content: center; }
 .editbar .sep { width: 1px; align-self: stretch; background: var(--line); margin: 0 2px; }
 .editbar .swatch { width: 26px; height: 26px; min-width: 0; padding: 0; border-radius: 50%; }
@@ -149,7 +147,6 @@ table.list a.title:hover { text-decoration: underline; }
   .note blockquote.space { break-inside: avoid; }
   .note textarea.memo-input::placeholder { color: transparent; }
   .note { -webkit-print-color-adjust: exact; print-color-adjust: exact; } /* 형광펜도 인쇄 */
-  .paper.editing { box-shadow: none; }
 }
 /* 유형 안내 */
 .guide { border: 1px solid #b9d2c4; background: var(--accent-soft); border-radius: var(--radius); padding: 18px 20px; display: grid; gap: 10px; }
@@ -565,7 +562,6 @@ async function viewLecture(cid, lid, scrollToFeedback = false) {
       ${omInfo}
       ${ME.is_admin && l.cost_usd != null ? `<span class="pill">비용 $${l.cost_usd}</span>` : ""}
       ${sourceLink}
-      <button class="btn small" id="edit">편집하기</button>
       <button class="btn small" id="dl">마크다운 받기</button>
       <button class="btn small" id="print">인쇄 / PDF 저장</button>
       <button class="btn small primary" id="rate">${l.rating ? `내 평가 ★ ${l.rating}` : "이 자료 평가하기"}</button>
@@ -574,7 +570,7 @@ async function viewLecture(cid, lid, scrollToFeedback = false) {
     <div class="note-layout">
       <nav class="toc" id="toc"></nav>
       <div>
-        <div class="editbar no-print" id="editbar" hidden>
+        <div class="editbar no-print" id="editbar">
           <button class="btn small" data-cmd="bold" title="굵게 (Ctrl+B)"><b>B</b></button>
           <button class="btn small" data-cmd="italic" title="기울임 (Ctrl+I)"><i>I</i></button>
           <button class="btn small" data-cmd="underline" title="밑줄 (Ctrl+U)"><u>U</u></button>
@@ -662,7 +658,7 @@ function attachMemos(lid, el, memos, status) {
 }
 
 // ---------- 노트 편집 (굵게·형광펜·글 수정) ----------
-// 편집 모드에서 노트를 contenteditable로 바꾸고, 입력을 멈추면 노트 HTML을 저장한다.
+// 노트는 처음부터 편집 가능(contenteditable)하고 서식 막대가 늘 보인다. 입력을 멈추면 노트 HTML을 저장한다.
 // 저장할 때 수식은 TeX(data-tex)만, 필기 칸은 이름표만 남긴다 (필기 글은 따로 저장).
 const HIGHLIGHTS = [["#fff2a8", "노랑"], ["#d4f5d0", "초록"], ["#ffd6e7", "분홍"], ["#d6ebff", "파랑"]];
 
@@ -681,8 +677,7 @@ function noteHtmlForSave(el) {
 }
 
 function setupEditing({lid, cid, md, memos, note, toc, status, edited}) {
-  const bar = document.getElementById("editbar"), btn = document.getElementById("edit");
-  const paper = document.getElementById("paper");
+  const bar = document.getElementById("editbar");
   const show = (text, err) => { status.textContent = text; status.classList.toggle("err", !!err); };
   const mark = on => { if (on) note.dataset.edited = "1"; else delete note.dataset.edited; };
   mark(edited);
@@ -704,19 +699,15 @@ function setupEditing({lid, cid, md, memos, note, toc, status, edited}) {
       show("편집 저장 실패 — 계속 고치면 다시 저장해요", true);
     }
   };
-  const changed = () => { dirty = true; clearTimeout(timer); timer = setTimeout(save, 1500); };
-  note.addEventListener("input", e => { if (!e.target.closest("textarea")) changed(); });
-
-  const setMode = on => {
-    note.contentEditable = on ? "true" : "false";
-    bar.hidden = !on;
-    paper.classList.toggle("editing", on);
-    btn.textContent = on ? "편집 끝내기" : "편집하기";
-    btn.classList.toggle("primary", on);
-    if (!on) save();
-    else if (!tracked) { tracked = true; track("note_edit", lid, cid); }
+  const changed = () => {
+    if (!tracked) { tracked = true; track("note_edit", lid, cid); }  // 처음 고친 순간 한 번만 기록
+    dirty = true;
+    clearTimeout(timer);
+    timer = setTimeout(save, 1500);
   };
-  btn.onclick = () => setMode(note.contentEditable !== "true");
+  note.addEventListener("input", e => { if (!e.target.closest("textarea")) changed(); });
+  note.addEventListener("focusout", e => { if (timer && !note.contains(e.relatedTarget)) save(); });
+  note.contentEditable = "true";
 
   // 버튼을 눌러도 노트의 글자 선택이 풀리지 않게 mousedown 기본 동작을 막는다
   bar.querySelectorAll("[data-cmd], [data-hl]").forEach(b => {
