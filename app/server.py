@@ -349,6 +349,36 @@ def get_note(lid: str, request: Request):
     return lec["note"]
 
 
+MEMO_LOCK = threading.Lock()  # 한 강의의 여러 칸을 동시에 저장해도 서로 덮어쓰지 않게
+
+
+@app.get("/api/lectures/{lid}/memos")
+def get_memos(lid: str, request: Request):
+    user, _ = owned_lecture(request, lid, "id")
+    return store.get_memos(user["id"], lid)
+
+
+class Memo(BaseModel):
+    index: int
+    text: str
+
+
+@app.put("/api/lectures/{lid}/memos")
+def save_memo(lid: str, body: Memo, request: Request):
+    """필기 칸 하나를 저장한다 (빈 글이면 지움)."""
+    user, _ = owned_lecture(request, lid, "id")
+    if not 0 <= body.index < 5000 or len(body.text) > 20000:
+        raise HTTPException(400, "필기 내용이 너무 길어요.")
+    with MEMO_LOCK:
+        memos = store.get_memos(user["id"], lid)
+        if body.text.strip():
+            memos[str(body.index)] = body.text
+        else:
+            memos.pop(str(body.index), None)
+        store.save_memos(user["id"], lid, memos)
+    return {"ok": True}
+
+
 @app.get("/api/lectures/{lid}/source")
 def get_source(lid: str, request: Request):
     _, lec = owned_lecture(request, lid, "pdf_path,title")

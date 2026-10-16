@@ -110,6 +110,14 @@ table.list a.title:hover { text-decoration: underline; }
 .note blockquote.space { border: 1px dashed #cfcec7; border-radius: 8px; color: var(--muted); padding: 6px 14px 8px;
   background-image: repeating-linear-gradient(transparent, transparent 31px, #ecebe6 31px, #ecebe6 32px); background-position: 0 30px; }
 .note blockquote.space p { margin: 0; min-height: 32px; }
+.note blockquote.space.typed { background-image: none; color: var(--ink); }
+.note blockquote.space .memo-label { color: var(--muted); font-weight: 700; font-size: 14px; }
+.note textarea.memo-input { display: block; width: 100%; min-height: 96px; border: none; outline: none; resize: none; overflow: hidden;
+  padding: 0; margin: 2px 0 0; color: var(--ink); line-height: 32px; font-size: 15px;
+  background: repeating-linear-gradient(transparent, transparent 31px, #ecebe6 31px, #ecebe6 32px); background-attachment: local; }
+.note blockquote.space:focus-within { border-color: var(--accent); }
+.memo-status { font-size: 12px; color: var(--muted); }
+.memo-status.err { color: var(--danger); }
 .note blockquote.memo { border-left-color: var(--warn); background: var(--warn-soft); color: var(--warn); border-radius: 0 6px 6px 0; }
 .note hr { border: none; border-top: 1px solid var(--line); margin: 28px 0; }
 .note .katex-display { overflow-x: auto; overflow-y: hidden; padding: 4px 0; }
@@ -130,6 +138,7 @@ table.list a.title:hover { text-decoration: underline; }
   .paper { border: none; padding: 0; }
   .note h2 { break-after: avoid; } .note h3 { break-after: avoid; }
   .note blockquote.space { break-inside: avoid; }
+  .note textarea.memo-input::placeholder { color: transparent; }
 }
 /* 유형 안내 */
 .guide { border: 1px solid #b9d2c4; background: var(--accent-soft); border-radius: var(--radius); padding: 18px 20px; display: grid; gap: 10px; }
@@ -530,7 +539,7 @@ async function viewLecture(cid, lid, scrollToFeedback = false) {
   }
 
   // 완료: 노트 보기
-  const md = await api(`/api/lectures/${lid}/note`);
+  const [md, memos] = await Promise.all([api(`/api/lectures/${lid}/note`), api(`/api/lectures/${lid}/memos`)]);
   track("note_view", lid, cid);
   const om = l.omissions;
   const omInfo = om && om.length
@@ -540,6 +549,7 @@ async function viewLecture(cid, lid, scrollToFeedback = false) {
     <div class="toolbar">
       ${back}
       <span class="spacer"></span>
+      <span class="memo-status" id="memoStatus"></span>
       ${omInfo}
       ${ME.is_admin && l.cost_usd != null ? `<span class="pill">비용 $${l.cost_usd}</span>` : ""}
       ${sourceLink}
@@ -556,10 +566,11 @@ async function viewLecture(cid, lid, scrollToFeedback = false) {
       </div>
     </div>`;
   renderNote(md, document.getElementById("note"), document.getElementById("toc"));
+  attachMemos(lid, document.getElementById("note"), memos, document.getElementById("memoStatus"));
   document.getElementById("dl").onclick = () => {
     track("note_download", lid, cid);
     const a = document.createElement("a");
-    a.href = URL.createObjectURL(new Blob([md], {type: "text/markdown"}));
+    a.href = URL.createObjectURL(new Blob([mdWithMemos(md, memos)], {type: "text/markdown"}));
     a.download = `${l.title}.md`;
     a.click();
   };
@@ -567,6 +578,58 @@ async function viewLecture(cid, lid, scrollToFeedback = false) {
   document.getElementById("rate").onclick = () => document.getElementById("feedback").scrollIntoView({behavior: "smooth"});
   await renderFeedback(lid, document.getElementById("feedback"));
   if (scrollToFeedback) document.getElementById("feedback").scrollIntoView();
+}
+
+// ---------- 필기 ----------
+// 노트의 필기·풀이 공간 칸을 입력창으로 바꾼다. 칸 번호 = 노트에서 나오는 순서. 입력을 멈추면 칸 하나씩 서버에 저장.
+const SPACE_LABEL = /^(필기|풀이 공간)$/;
+
+function attachMemos(lid, el, memos, status) {
+  const show = (text, err) => { status.textContent = text; status.classList.toggle("err", !!err); };
+  el.querySelectorAll("blockquote.space").forEach((b, i) => {
+    const label = b.textContent.replace(/\s+/g, " ").trim();
+    b.classList.add("typed");
+    b.innerHTML = `<div class="memo-label">${esc(label)}</div>`;
+    const ta = document.createElement("textarea");
+    ta.className = "memo-input";
+    ta.placeholder = "여기에 직접 적을 수 있어요";
+    ta.value = memos[i] || "";
+    b.appendChild(ta);
+    const grow = () => { ta.style.height = "auto"; ta.style.height = ta.scrollHeight + "px"; };
+    let timer = null, saved = ta.value;
+    const save = async () => {
+      clearTimeout(timer);
+      timer = null;
+      const text = ta.value;
+      if (text === saved) return;
+      show("필기 저장 중…");
+      try {
+        await api(`/api/lectures/${lid}/memos`, {method: "PUT", headers: {"content-type": "application/json"},
+          body: JSON.stringify({index: i, text})});
+        saved = text;
+        if (text.trim()) memos[i] = text; else delete memos[i];
+        show("필기 저장됨");
+      } catch (e) {
+        show("필기 저장 실패 — 다시 입력하면 다시 저장해요", true);
+      }
+    };
+    ta.addEventListener("input", () => { grow(); clearTimeout(timer); timer = setTimeout(save, 800); });
+    ta.addEventListener("blur", () => { if (timer) save(); });
+    requestAnimationFrame(grow);
+  });
+}
+
+// 마크다운 받기: 필기 칸 순서대로 쓴 글을 끼워 넣는다 (화면의 blockquote.space 순서와 같은 기준)
+function mdWithMemos(md, memos) {
+  let i = -1;
+  return md.replace(/(?:^>[^\n]*(?:\n|$))+/gm, block => {  // [^\n]: \r\n 줄바꿈 노트도 한 덩어리로
+    const label = block.replace(/^>\s?/gm, "").replace(/\*\*|&nbsp;/g, "").replace(/\s+/g, " ").trim();
+    if (!SPACE_LABEL.test(label)) return block;
+    const text = memos[++i];
+    if (!text) return block;
+    const lines = text.replace(/\s+$/, "").split("\n").map(l => `> ${l}  `).join("\n");
+    return `> **${label}**\n${lines}${block.endsWith("\n") ? "\n" : ""}`;
+  });
 }
 
 // ---------- 자료 만족도 평가 ----------

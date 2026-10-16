@@ -3,6 +3,7 @@
 서버만 secret key로 접근한다. 표에는 RLS가 켜져 있고 정책이 없어서 브라우저에서는 직접 못 읽는다.
 그래서 여기의 모든 조회는 user_id로 직접 거른다 (빠뜨리면 다른 사용자 자료가 보인다).
 """
+import json
 import re
 from datetime import datetime, timedelta, timezone
 
@@ -124,7 +125,8 @@ def create_course(uid, data):
 
 
 def delete_course(uid, cid):
-    paths = [l["pdf_path"] for l in list_lectures(uid, cid) if l.get("pdf_path")]
+    lectures = list_lectures(uid, cid, "id,pdf_path")
+    paths = [l["pdf_path"] for l in lectures if l.get("pdf_path")] + [memo_path(uid, l["id"]) for l in lectures]
     if paths:
         service().storage.from_(BUCKET).remove(paths)
     service().table("courses").delete().eq("user_id", uid).eq("id", cid).execute()
@@ -169,13 +171,35 @@ def delete_lecture(uid, lid):
     lec = get_lecture(uid, lid, "id,pdf_path")
     if not lec:
         return
-    if lec.get("pdf_path"):
-        service().storage.from_(BUCKET).remove([lec["pdf_path"]])
+    service().storage.from_(BUCKET).remove([p for p in (lec.get("pdf_path"), memo_path(uid, lid)) if p])
     service().table("lectures").delete().eq("user_id", uid).eq("id", lid).execute()
 
 
 def download_pdf(path):
     return service().storage.from_(BUCKET).download(path)
+
+
+# ---------- 필기 (노트의 필기·풀이 공간에 직접 쓴 글) ----------
+# 강의마다 {"칸 번호": "글"} JSON 파일 하나. 칸 번호는 노트에서 필기·풀이 공간이 나오는 순서 (0부터).
+
+def memo_path(uid, lid):
+    return f"{uid}/{lid}.memos.json"
+
+
+def get_memos(uid, lid):
+    try:
+        return json.loads(service().storage.from_(BUCKET).download(memo_path(uid, lid)))
+    except Exception as e:
+        # 아직 쓴 적 없으면 파일이 없다. 그 밖의 오류는 그대로 올린다 (빈 값으로 보고 저장하면 기존 필기를 덮어씀)
+        if "not found" in str(e).lower() or "404" in str(e):
+            return {}
+        raise
+
+
+def save_memos(uid, lid, memos):
+    data = json.dumps(memos, ensure_ascii=False).encode()
+    service().storage.from_(BUCKET).upload(memo_path(uid, lid), data,
+                                          {"content-type": "application/json", "upsert": "true"})
 
 
 def fail_interrupted_jobs():
