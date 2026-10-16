@@ -69,6 +69,7 @@
 7. **테스트 T2 (B1)** — 통계와사회 4장 PPT 43장 → 장별 노트(예제 24개, 수식 LaTeX) → 승인
 8. 모든 단계를 Notion 정리본 DB에 기록
 10. **1단계 엔진 v0 (10-15)** — `scripts/generate_note.py`로 API 자동 생성 3건(4강·5강·통계 4장) → 수동 노트와 본문 유사도 0.81~0.96, 구조 규칙 준수, 누락 없음 (처음에 4강 p.6 누락으로 봤으나 비교 스크립트 오탐으로 정정). 생성 후 **누락 점검 단계** 추가 (T5). 강의 1개당 약 $0.6~1 추정 (`docs/test_log.md` T4)
+22. **사용자 프로필 (10-16)** — 사용자 요청. 홈 위쪽 프로필 카드(사진·이름·"학교 · 학과 · N학년 · 나이세" + 프로필 수정), 머리글에 사진·이름(누르면 `#/profile`), 프로필 화면에서 이름·학교·학과·학년(1~6·대학원·기타)·나이·사진. 모든 칸 선택. DB: `supabase/003_profile.sql`로 profiles에 칸 추가 (10-16 사용자 실행 완료). 사진은 화면에서 가운데 정사각형 256px JPEG로 줄여(위치 등 사진 정보 제거) Storage `{user}/avatar.jpg` 비공개 저장, 서버가 JPG/PNG 파일 앞부분·2MB 확인, `/api/profile/avatar?v=시각`으로 본인만 봄. API `GET/PUT /api/profile`, `PUT/GET/DELETE /api/profile/avatar`, `/api/me`에 profile 포함, 사용 기록 `profile_update`. 점검 `tests/e2e_profile.py` 12개 + 기존 55개 + headless Chrome 화면 점검 통과
 21. **노트 편집 — 굵게·형광펜·글 수정 (10-16)** — 사용자 요청. (처음엔 "편집하기" 버튼 → 사용자 요청으로 **버튼 없이 처음부터 편집 가능**, 서식 막대 늘 보임, 처음 고칠 때 `note_edit` 기록) 서식 막대(굵게·기울임·밑줄·취소선·형광펜 4색·형광펜 지우기·서식 지우기·되돌리기/다시) + 본문 글 직접 수정. 입력을 멈추고 1.5초 뒤 자동 저장 ("편집 저장됨"). 저장은 Storage `{user}/{lecture}.edited.json` (`{"html"}`): 수식은 `data-tex`만 남겨 불러올 때 다시 그리고, 필기 칸은 이름표만 남김 (필기 글은 memos에 따로). 편집본이 있으면 원본 마크다운 대신 편집본을 보여 줌. "원본으로 되돌리기"는 편집본만 지우고 필기는 남김. 인쇄/PDF에 형광펜 포함. **마크다운 받기도 편집본 반영**: 편집본이 있으면 화면 HTML을 turndown(CDN, 받을 때만 불러옴)으로 변환 — 형광펜 `<mark style="background:…">`, 밑줄 `<u>`, 굵게 `**`, 취소선 `~~`, 수식은 TeX로, 필기 칸은 쓴 글로, 목록은 원본처럼 `- `, 글자 이스케이프(`\[`) 안 함. 원본과 줄 일치율 0.93 (차이는 편집 내용 + 한 줄 수식을 `$$…$$` 한 줄로 쓰는 것 정도). 편집본이 없으면 예전처럼 원본 .md + 필기. **물결표 버그 수정**: marked가 `~한 개~`를 취소선으로 처리해 "7~8세기 … p.3~5" 사이가 취소선으로 보였음 (사이트 노트 4개 모두 해당) → 코드 밖의 물결표 하나는 글자로. 사용 기록 `note_edit`. API `GET/PUT/DELETE /api/lectures/{lid}/edited`. **Supabase 연결 오류 수정**: 기본 HTTP/2 공유 연결이 끊기면 동시 요청이 500(`ConnectionTerminated`)으로 실패 → `store.service()`를 HTTP/1.1 연결 풀 + 재시도로 (기존 `/note`에도 있던 문제). 점검: headless Chrome으로 필기·형광펜·굵게·글 수정·새로고침 유지·수식 269개 유지·편집본 마크다운 받기·되돌리기 22개 통과, e2e 55개 통과
 20. **필기 칸 직접 입력 (10-16)** — 사용자 요청. 노트의 `필기`·`풀이 공간` 칸을 줄 노트 모양 입력창으로 바꿈 (글 길이에 따라 늘어남). 입력을 멈추고 0.8초 뒤, 또는 칸을 벗어나면 칸 하나씩 자동 저장하고, 툴바에 "필기 저장됨" 표시. 저장은 DB 표가 아니라 Storage `lectures` 버킷의 `{user}/{lecture}.memos.json` (`{"칸 번호": "글"}`, 칸 번호 = 노트 안 순서) → SQL 실행 불필요. 강의·과목 삭제 시 함께 삭제. 인쇄에 필기 포함, "마크다운 받기"에 필기를 칸마다 끼워 넣음. API `GET/PUT /api/lectures/{lid}/memos`. 점검 `tests/e2e_memos.py` 10개 + 기존 45개 통과. ⚠ 노트를 다시 만들면 칸 순서가 바뀌어 필기가 엉뚱한 칸에 붙을 수 있음 (다시 만들기 기능을 만들 때 처리)
 19. **경영학원론 유형 수동 변경 (10-16)** — 사용자가 사이트에서 만든 경영학원론이 C 개념·사례 이해형으로 판정돼 모든 단계가 "준비 중"으로 표시됨 (버그 아님, 자료 생성은 A1·B1만 가능). 사용자 선택으로 DB에서 primary_type C→A 변경, events에 `type_change`(from C, to A) 기록. 기존 과목 유형을 바꾸는 화면이 없고, C1 규칙은 아직 없음
@@ -117,7 +118,7 @@ STUDY_IN_UNIV/
 ├── run_web.bat                  ← 로컬 웹 미리보기 실행 (http://127.0.0.1:8000)
 ├── render.yaml, requirements.txt, .python-version ← Render 클라우드 배포 설정
 ├── tools/cloudflared.exe        ← 임시 공개 링크용 (git 제외). 실행은 사용자가 직접: tools\cloudflared.exe tunnel --url http://127.0.0.1:8000
-├── supabase/schema.sql, 002_feedback.sql ← DB 표 구조 (Supabase SQL Editor에서 순서대로 실행)
+├── supabase/schema.sql, 002_feedback.sql, 003_profile.sql ← DB 표 구조 (Supabase SQL Editor에서 순서대로 실행)
 ├── app/
 │   ├── feedback.py              ← 과목 유형 안내 문구 + 자료 평가표 정의
 │   ├── store.py                 ← Supabase 저장 계층 (로그인·과목·강의·PDF·사용 기록)
@@ -133,7 +134,7 @@ STUDY_IN_UNIV/
 │   └── templates/
 │       ├── A1_강의노트.md       ← A 1단계 생성 규칙 v1
 │       └── B1_장별노트.md       ← B 1단계 생성 규칙 v1
-├── tests/                       ← 점검 스크립트: e2e_auth(로그인·분리 28개), e2e_feedback(평가 17개), e2e_generate(실제 생성 1회 약 $0.2), e2e_memos(필기 저장 10개). 시험 서버(8020) 먼저 실행
+├── tests/                       ← 점검 스크립트: e2e_auth(로그인·분리 28개), e2e_feedback(평가 17개), e2e_generate(실제 생성 1회 약 $0.2), e2e_memos(필기 저장 10개), e2e_profile(프로필 12개). 시험 서버(8020) 먼저 실행
 ├── scripts/
 │   ├── build_academic_dataset.py  ← 대화 내보내기 + 라벨 → data/processed/
 │   ├── generate_note.py           ← 1단계 엔진: PDF → Claude API + 생성 규칙 → 마크다운 (--dry-run: 비용 추정)

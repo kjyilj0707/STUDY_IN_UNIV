@@ -133,7 +133,94 @@ def me(request: Request):
     user = require_user(request)
     admin = is_admin(user)
     return {**user, "is_admin": admin, "daily_limit": None if admin else DAILY_LIMIT,
-            "generations_today": store.generations_today(user["id"])}
+            "generations_today": store.generations_today(user["id"]), "profile": profile_view(user)}
+
+
+# ---------- 프로필 ----------
+
+GRADES = {"1", "2", "3", "4", "5", "6", "grad", "etc"}
+AVATAR_TYPES = {b"\xff\xd8\xff": "image/jpeg", b"\x89PNG": "image/png"}  # 파일 앞부분으로 확인
+AVATAR_MAX = 2_000_000
+
+
+def profile_view(user):
+    p = store.get_profile(user["id"])
+    view = {k: p.get(k) for k in store.PROFILE_FIELDS}
+    # 사진 주소에 바꾼 시각을 붙여 새 사진이 바로 보이게 한다 (브라우저 캐시)
+    view["avatar_url"] = f"/api/profile/avatar?v={p['avatar_at']}" if p.get("avatar_at") else None
+    return view
+
+
+class Profile(BaseModel):
+    display_name: str = ""
+    school: str = ""
+    department: str = ""
+    grade: str = ""
+    age: int | None = None
+
+
+@app.get("/api/profile")
+def get_profile(request: Request):
+    return profile_view(require_user(request))
+
+
+@app.put("/api/profile")
+def save_profile(body: Profile, request: Request):
+    user = require_user(request)
+    fields = {k: (getattr(body, k) or "").strip() or None for k in ("display_name", "school", "department", "grade")}
+    if any(v and len(v) > 40 for v in fields.values()):
+        raise HTTPException(400, "40자 이내로 적어 주세요.")
+    if fields["grade"] and fields["grade"] not in GRADES:
+        raise HTTPException(400, "학년을 목록에서 골라 주세요.")
+    if body.age is not None and not 10 <= body.age <= 99:
+        raise HTTPException(400, "나이는 10~99 사이로 적어 주세요.")
+    fields["age"] = body.age
+    try:
+        store.save_profile(user["id"], user["email"], fields)
+    except Exception as e:
+        if "column" in str(e).lower():  # 003_profile.sql을 아직 실행하지 않음
+            raise HTTPException(503, "프로필 저장 준비가 아직 안 됐어요 (관리자: supabase/003_profile.sql 실행 필요).")
+        raise
+    store.log_event(user["id"], "profile_update")
+    return profile_view(user)
+
+
+@app.put("/api/profile/avatar")
+def save_avatar(request: Request, file: UploadFile = File(...)):
+    """프로필 사진. 화면에서 256px JPEG로 줄여서 보낸다. 서버는 크기·형식만 확인한다."""
+    user = require_user(request)
+    data = file.file.read(AVATAR_MAX + 1)
+    if len(data) > AVATAR_MAX:
+        raise HTTPException(400, "사진이 너무 커요 (2MB 이하).")
+    ctype = next((t for sig, t in AVATAR_TYPES.items() if data.startswith(sig)), None)
+    if not ctype:
+        raise HTTPException(400, "JPG 또는 PNG 사진만 올릴 수 있어요.")
+    try:
+        store.save_avatar(user["id"], user["email"], data, ctype)
+    except Exception as e:
+        if "column" in str(e).lower():
+            raise HTTPException(503, "프로필 저장 준비가 아직 안 됐어요 (관리자: supabase/003_profile.sql 실행 필요).")
+        raise
+    return profile_view(user)
+
+
+@app.get("/api/profile/avatar")
+def get_avatar(request: Request):
+    user = require_user(request)
+    try:
+        data = store.get_avatar(user["id"])
+    except Exception:
+        raise HTTPException(404, "사진이 없어요.")
+    ctype = next((t for sig, t in AVATAR_TYPES.items() if data.startswith(sig)), "application/octet-stream")
+    return Response(data, media_type=ctype,
+                    headers={"Cache-Control": "private, max-age=86400", "X-Content-Type-Options": "nosniff"})
+
+
+@app.delete("/api/profile/avatar")
+def delete_avatar(request: Request):
+    user = require_user(request)
+    store.delete_avatar(user["id"])
+    return profile_view(user)
 
 
 # ---------- 화면 ----------

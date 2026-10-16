@@ -115,6 +115,39 @@ def user_from_token(access_token):
     return {"id": res.user.id, "email": res.user.email} if res and res.user else None
 
 
+# ---------- 프로필 (supabase/003_profile.sql) ----------
+
+PROFILE_FIELDS = ("display_name", "school", "department", "grade", "age")
+
+
+def get_profile(uid):
+    rows = service().table("profiles").select("*").eq("id", uid).execute().data
+    return rows[0] if rows else {}
+
+
+def save_profile(uid, email, fields):
+    row = {"id": uid, "email": email, **{k: fields.get(k) for k in PROFILE_FIELDS}, "updated_at": now_iso()}
+    return service().table("profiles").upsert(row).execute().data[0]
+
+
+def avatar_path(uid):
+    return f"{uid}/avatar.jpg"
+
+
+def save_avatar(uid, email, data, content_type):
+    service().storage.from_(BUCKET).upload(avatar_path(uid), data, {"content-type": content_type, "upsert": "true"})
+    service().table("profiles").upsert({"id": uid, "email": email, "avatar_at": now_iso()}).execute()
+
+
+def get_avatar(uid):
+    return service().storage.from_(BUCKET).download(avatar_path(uid))
+
+
+def delete_avatar(uid):
+    service().storage.from_(BUCKET).remove([avatar_path(uid)])
+    service().table("profiles").update({"avatar_at": None}).eq("id", uid).execute()
+
+
 # ---------- 과목 ----------
 
 def list_courses(uid):

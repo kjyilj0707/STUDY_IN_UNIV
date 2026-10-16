@@ -190,6 +190,16 @@ table.list a.title:hover { text-decoration: underline; }
 header.top .me { font-size: 13px; color: var(--muted); display: flex; gap: 10px; align-items: center; }
 header.top .me a, header.top .me button { color: var(--muted); background: none; border: 0; cursor: pointer; font-size: 13px; padding: 0; text-decoration: underline; }
 table.list td.num { text-align: right; font-variant-numeric: tabular-nums; }
+/* 프로필 */
+.avatar { width: 28px; height: 28px; border-radius: 50%; object-fit: cover; flex: none; background: var(--accent-soft); color: var(--accent);
+  display: inline-flex; align-items: center; justify-content: center; font-weight: 700; font-size: 13px; }
+.avatar.lg { width: 64px; height: 64px; font-size: 26px; }
+.avatar.xl { width: 112px; height: 112px; font-size: 44px; }
+header.top .me a.who { display: inline-flex; gap: 8px; align-items: center; text-decoration: none; color: var(--ink); font-weight: 600; }
+.profile-card { display: flex; gap: 16px; align-items: center; margin-bottom: 28px; flex-wrap: wrap; }
+.profile-card .pname { font-size: 19px; font-weight: 700; }
+.profile-card .pmeta { color: var(--muted); font-size: 14px; }
+.form input[type=number] { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; background: #fff; width: 100%; }
 @media (max-width: 640px) { header.top .me .email { display: none; } header.top .tag { display: none; } }
 </style>
 </head>
@@ -224,9 +234,102 @@ const track = (type, lecture_id, course_id) => postJSON("/api/events", {type, le
 
 async function loadMe() {
   ME = await api("/api/me");
+  renderHeader();
+}
+
+// ---------- 프로필 ----------
+const GRADE_LABELS = {"1": "1학년", "2": "2학년", "3": "3학년", "4": "4학년", "5": "5학년", "6": "6학년", grad: "대학원", etc: "기타"};
+
+function avatarHtml(p, size = "") {
+  if (p.avatar_url) return `<img class="avatar ${size}" src="${esc(p.avatar_url)}" alt="">`;
+  const initial = (p.display_name || ME.email || "?").trim()[0].toUpperCase();
+  return `<span class="avatar ${size}">${esc(initial)}</span>`;
+}
+
+function profileSummary(p) {
+  return [p.school, p.department, GRADE_LABELS[p.grade], p.age ? `${p.age}세` : ""].filter(Boolean).map(esc).join(" · ");
+}
+
+// 사진을 가운데 정사각형으로 잘라 256px JPEG로 줄인다 (용량 줄이기 + 위치 정보 등 사진 정보 제거)
+async function squareJpeg(file, size = 256) {
+  let bmp;
+  try { bmp = await createImageBitmap(file, {imageOrientation: "from-image"}); }
+  catch { throw new Error("이 사진 형식은 열 수 없어요. JPG나 PNG 사진으로 올려 주세요."); }
+  const s = Math.min(bmp.width, bmp.height);
+  const c = document.createElement("canvas");
+  c.width = c.height = size;
+  const ctx = c.getContext("2d");
+  ctx.fillStyle = "#fff";
+  ctx.fillRect(0, 0, size, size);
+  ctx.drawImage(bmp, (bmp.width - s) / 2, (bmp.height - s) / 2, s, s, 0, 0, size, size);
+  return new Promise((res, rej) => c.toBlob(b => b ? res(b) : rej(new Error("사진을 바꾸지 못했어요.")), "image/jpeg", 0.88));
+}
+
+async function viewProfile() {
+  const p = await api("/api/profile");
+  $view.innerHTML = `
+    <p><a class="btn ghost small" href="#/">← 홈으로</a></p>
+    <h1>내 프로필</h1>
+    <p class="sub">다른 사용자에게는 보이지 않아요. 모든 칸은 비워 둬도 돼요.</p>
+    <div class="card form" style="max-width:560px">
+      <div class="row" style="gap:18px">
+        <span id="pAvatar">${avatarHtml(p, "xl")}</span>
+        <div style="display:grid;gap:6px;justify-items:start">
+          <button class="btn small" id="pPick">사진 선택</button>
+          <button class="btn small ghost" id="pDel" ${p.avatar_url ? "" : "hidden"}>사진 지우기</button>
+          <span class="fine">가운데를 정사각형으로 잘라 작게 저장해요</span>
+          <input type="file" id="pFile" accept="image/*" hidden>
+        </div>
+      </div>
+      <label>프로필 이름 <input type="text" id="pName" maxlength="40" value="${esc(p.display_name)}" placeholder="예: 민수"></label>
+      <label>학교 <input type="text" id="pSchool" maxlength="40" value="${esc(p.school)}" placeholder="예: 한국대학교"></label>
+      <label>학과 <input type="text" id="pDept" maxlength="40" value="${esc(p.department)}" placeholder="예: 국어국문학과"></label>
+      <div class="row" style="gap:12px; align-items:start">
+        <label style="flex:1">학년
+          <select id="pGrade"><option value="">선택 안 함</option>
+            ${Object.entries(GRADE_LABELS).map(([k, v]) => `<option value="${k}" ${k === p.grade ? "selected" : ""}>${v}</option>`).join("")}
+          </select></label>
+        <label style="flex:1">나이 <input type="number" id="pAge" min="10" max="99" value="${p.age ?? ""}" placeholder="예: 21"></label>
+      </div>
+      <div class="row"><button class="btn primary" id="pSave">저장하기</button><span id="pMsg"></span></div>
+    </div>`;
+  const msg = (text, ok) => { document.getElementById("pMsg").innerHTML = `<span class="notice ${ok ? "ok" : "err"}">${esc(text)}</span>`; };
+  const applied = r => { ME.profile = r; renderHeader(); document.getElementById("pAvatar").innerHTML = avatarHtml(r, "xl");
+                         document.getElementById("pDel").hidden = !r.avatar_url; };
+  const file = document.getElementById("pFile");
+  document.getElementById("pPick").onclick = () => file.click();
+  file.onchange = async () => {
+    if (!file.files[0]) return;
+    try {
+      const fd = new FormData();
+      fd.append("file", await squareJpeg(file.files[0]), "avatar.jpg");
+      applied(await api("/api/profile/avatar", {method: "PUT", body: fd}));
+      msg("사진을 바꿨어요.", true);
+    } catch (e) { msg(e.message); }
+    file.value = "";
+  };
+  document.getElementById("pDel").onclick = async () => {
+    try { applied(await api("/api/profile/avatar", {method: "DELETE"})); msg("사진을 지웠어요.", true); }
+    catch (e) { msg(e.message); }
+  };
+  document.getElementById("pSave").onclick = async () => {
+    const age = document.getElementById("pAge").value.trim();
+    const body = {display_name: document.getElementById("pName").value, school: document.getElementById("pSchool").value,
+      department: document.getElementById("pDept").value, grade: document.getElementById("pGrade").value,
+      age: age ? Number(age) : null};
+    try {
+      applied(await api("/api/profile", {method: "PUT", headers: {"content-type": "application/json"}, body: JSON.stringify(body)}));
+      msg("저장했어요.", true);
+    } catch (e) { msg(e.message); }
+  };
+}
+
+function renderHeader() {
   const quota = ME.is_admin ? "관리자 · 생성 제한 없음" : `오늘 생성 ${ME.generations_today}/${ME.daily_limit}`;
+  const p = ME.profile || {};
   document.getElementById("me").innerHTML = `
-    <span class="email">${esc(ME.email)}</span><span>${quota}</span>
+    <a class="who" href="#/profile" title="내 프로필">${avatarHtml(p)}<span class="email">${esc(p.display_name || ME.email)}</span></a>
+    <span>${quota}</span>
     ${ME.is_admin ? `<a href="#/admin">관리자</a>` : ""}
     <button id="logout">로그아웃</button>`;
   document.getElementById("logout").onclick = async () => {
@@ -335,7 +438,16 @@ function viewAuth(mode = "login") {
 // ---------- 홈 ----------
 async function viewHome() {
   const courses = await api("/api/courses");
+  const p = ME.profile || {};
   $view.innerHTML = `
+    <div class="card profile-card">
+      ${avatarHtml(p, "lg")}
+      <div style="flex:1; min-width:180px">
+        <div class="pname">${esc(p.display_name || ME.email)}</div>
+        <div class="pmeta">${profileSummary(p) || "학교·학과·학년을 아직 적지 않았어요"}</div>
+      </div>
+      <a class="btn small" href="#/profile">프로필 수정</a>
+    </div>
     <h1>내 과목</h1>
     <p class="sub">수업계획서로 과목 유형을 판정하고, 유형별 단계에 맞는 수업 자료를 강의 PDF로 만듭니다.</p>
     <div class="grid">
@@ -944,7 +1056,7 @@ function renderNote(md, el, toc, edited) {
 // ---------- 관리자 ----------
 const EVENT_NAMES = {signup: "가입", login: "로그인", classify: "유형 판정", course_create: "과목 생성",
   lecture_upload: "강의 업로드", generate_start: "생성 시작", generate_done: "생성 완료", generate_error: "생성 오류",
-  note_view: "노트 열람", note_download: "마크다운 받기", note_print: "인쇄", note_edit: "노트 편집", feedback_submit: "자료 평가"};
+  note_view: "노트 열람", note_download: "마크다운 받기", note_print: "인쇄", note_edit: "노트 편집", profile_update: "프로필 수정", feedback_submit: "자료 평가"};
 const RATING_NAMES = {overall: "전체 유용성", completeness: "완전성", accuracy: "정확성", structure: "구성",
   traceability: "출처 대조", writing_space: "필기 공간", time_saving: "시간 절약", stage_specific: "단계별 문항"};
 const ISSUE_NAMES = {missing: "빠진 내용", wrong: "잘못 옮김", added: "원본에 없는 내용", order: "순서·구성",
@@ -999,6 +1111,7 @@ async function route() {
     const parts = (location.hash.replace(/^#/, "") || "/").split("/").filter(Boolean);
     if (parts.length === 0) await viewHome();
     else if (parts[0] === "new") viewNew();
+    else if (parts[0] === "profile") await viewProfile();
     else if (parts[0] === "admin") await viewAdmin();
     else if (parts[0] === "c" && parts.length === 2) await viewCourse(parts[1]);
     else if (parts[0] === "c" && parts[2] === "s") await viewCourse(parts[1], parts[3]);
