@@ -39,6 +39,17 @@ PIPELINES = {
 }
 TYPE_NAMES = {"A": "서술·해석형", "B": "수리·계산형", "C": "개념·사례 이해형", "D": "코딩·실습형", "E": "과제·프로젝트형"}
 
+# 테스트 단계(2026-10-16 결정): 자료를 만들 수 있는 유형은 A·B뿐 → C·D·E로 판정되면 A·B 중 가까운 쪽으로 서비스한다.
+# 판정 때 모델이 과목마다 service_type을 고르고, 그 값이 없을 때만 아래 기본값을 쓴다.
+SERVED_TYPES = ("A", "B")
+NEAREST_SERVED = {"C": "A", "D": "B", "E": "A"}
+
+
+def served_type(judged, suggested=None):
+    if judged in SERVED_TYPES:
+        return judged
+    return suggested if suggested in SERVED_TYPES else NEAREST_SERVED.get(judged, "A")
+
 COMMON_RULES = """# 모든 문서 공통 규칙 (사용자 대화 기록에서 반복 확인)
 - 정리 = 구조화. 요약·축약·누락 금지. 슬라이드의 모든 문장을 빠짐없이 옮긴다.
 - 필기 여백 확보 (`> **필기**` + `&nbsp;` 3줄)
@@ -88,6 +99,8 @@ CLASSIFY_SCHEMA = {
         "semester": {"type": "string"},
         "primary_type": {"type": "string", "enum": ["A", "B", "C", "D", "E"]},
         "secondary_types": {"type": "array", "items": {"type": "string", "enum": ["A", "B", "C", "D", "E"]}},
+        "service_type": {"type": "string", "enum": ["A", "B"]},
+        "service_reason": {"type": "string"},
         "reasons": {
             "type": "array",
             "items": {
@@ -108,7 +121,8 @@ CLASSIFY_SCHEMA = {
             },
         },
     },
-    "required": ["course_name", "professor", "semester", "primary_type", "secondary_types", "reasons", "evaluation", "weeks"],
+    "required": ["course_name", "professor", "semester", "primary_type", "secondary_types", "service_type", "service_reason",
+                 "reasons", "evaluation", "weeks"],
     "additionalProperties": False,
 }
 
@@ -362,6 +376,10 @@ def apply_omissions(note, omissions):
 CLASSIFY_PROMPT = """아래 수업계획서로 과목 유형을 판정하라. 유형 정의와 판정 기준은 system의 문서(과목 유형 정의 v0) 1·3절을 따른다.
 
 - primary_type: 주 유형 하나. secondary_types: 함께 붙는 유형 (예: 보고서·발표·과제 비중이 50% 이상이면 E). 없으면 빈 배열
+- service_type: 지금 서비스는 A·B 파이프라인만 자료를 만든다. primary_type이 A나 B면 그대로 적는다.
+  C·D·E면 이 과목의 실제 공부 흐름이 어느 쪽에 더 가까운지로 고른다 — 강의 내용을 읽고 정리·해석·서술·암기하는 쪽이면 A,
+  계산·공식·풀이 과정을 익히고 문제를 푸는 쪽이면 B. 시험 형식(서술형·논술 / 계산·객관식 문제)과 수업 자료 성격을 근거로.
+- service_reason: service_type을 고른 근거 한 줄 (primary_type이 A·B면 빈 문자열)
 - reasons: 판정 근거. signal = 판정 기준 중 무엇인지 (학문 분야 / 수업 자료 성격 / 시험 형식 / 평가 비중), evidence = 수업계획서의 원문 문장을 그대로
 - evaluation: 평가 항목과 비율을 한 줄로 (예: "기말 40 / 중간 대체과제 15 / 조별발표 20")
 - weeks: 주차별 강의 주제. 수업계획서에 있는 그대로 (week 예: "7주차")

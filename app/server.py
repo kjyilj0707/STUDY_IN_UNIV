@@ -289,7 +289,13 @@ def classify(request: Request, file: UploadFile | None = File(None), text: str =
     if len(text.strip()) < 50:
         raise HTTPException(400, "수업계획서 내용을 읽지 못했습니다. 텍스트를 직접 붙여넣어 주세요.")
     result, record = engine.classify_syllabus(text)
-    store.log_event(user["id"], "classify", primary_type=result["primary_type"],
+    # 판정 유형(judged_type)은 남기고, 자료를 만들 유형(primary_type)은 A·B 중 가까운 쪽으로
+    judged = result["primary_type"]
+    result["judged_type"] = judged
+    result["primary_type"] = engine.served_type(judged, result.pop("service_type", None))
+    if result["primary_type"] == judged:
+        result["service_reason"] = ""
+    store.log_event(user["id"], "classify", primary_type=result["primary_type"], judged_type=judged,
                     course_name=result["course_name"], cost_usd=record["cost_usd"])
     return {"result": decorate(result), "syllabus_text": text, "cost_usd": record["cost_usd"]}
 
@@ -304,6 +310,8 @@ class NewCourse(BaseModel):
     reasons: list[dict] = []
     weeks: list[dict] = []
     syllabus_text: str = ""
+    judged_type: str = ""      # 판정 유형 (A~E). 표에는 칸이 없어 사용 기록에만 남긴다
+    service_reason: str = ""
 
 
 @app.post("/api/courses")
@@ -311,8 +319,12 @@ def create_course(body: NewCourse, request: Request):
     user = require_user(request)
     if body.primary_type not in engine.PIPELINES:
         raise HTTPException(400, "알 수 없는 유형입니다.")
-    course = store.create_course(user["id"], body.model_dump())
-    store.log_event(user["id"], "course_create", course_id=course["id"], primary_type=course["primary_type"])
+    judged = body.judged_type if body.judged_type in engine.PIPELINES else body.primary_type
+    data = body.model_dump(exclude={"judged_type", "service_reason"})
+    data["primary_type"] = engine.served_type(body.primary_type)  # 테스트 단계: A·B만 저장
+    course = store.create_course(user["id"], data)
+    store.log_event(user["id"], "course_create", course_id=course["id"], primary_type=course["primary_type"],
+                    judged_type=judged, service_reason=body.service_reason or None)
     return decorate({**course, "lectures": []})
 
 

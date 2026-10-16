@@ -503,8 +503,13 @@ function viewNew() {
 
 function showClassification(r) {
   const c = r.result;
+  const moved = c.judged_type && c.judged_type !== c.primary_type;
   document.getElementById("result").innerHTML = `
     <h2>판정 결과</h2>
+    ${moved ? `<div class="notice" style="margin-bottom:12px">
+      판정 결과는 <b>${esc(c.judged_type)} ${esc(TYPE_NAMES[c.judged_type])}</b>이에요. 이 유형의 자료는 아직 준비 중이라,
+      공부 흐름이 가장 가까운 <b>${esc(c.primary_type)} ${esc(TYPE_NAMES[c.primary_type])}</b>으로 자료를 만들어 드려요.
+      ${c.service_reason ? `<br><span class="fine">근거: ${esc(c.service_reason)}</span>` : ""}</div>` : ""}
     ${guideCard(c)}
     <div class="card form" style="margin-top:14px">
       <div class="row">
@@ -512,9 +517,9 @@ function showClassification(r) {
         <label style="flex:1">교수<input type="text" id="cProf" value="${esc(c.professor)}"></label>
         <label style="flex:1">학기<input type="text" id="cSem" value="${esc(c.semester)}"></label>
       </div>
-      <label>주 유형 (판정이 틀리면 바꿀 수 있어요)
-        <select id="cType">${Object.entries(TYPE_NAMES).map(([k, v]) =>
-          `<option value="${k}" ${k === c.primary_type ? "selected" : ""}>${k} ${v}${"AB".includes(k) ? "" : " (자료 생성 준비 중)"}</option>`).join("")}</select>
+      <label>자료를 만들 유형 (판정이 틀리면 바꿀 수 있어요 · 지금은 A·B만 지원)
+        <select id="cType">${["A", "B"].map(k =>
+          `<option value="${k}" ${k === c.primary_type ? "selected" : ""}>${k} ${TYPE_NAMES[k]}</option>`).join("")}</select>
       </label>
       ${c.evaluation ? `<div><b>평가 방식</b> <span class="pill">${esc(c.evaluation)}</span></div>` : ""}
       ${c.weeks.length ? `<details><summary>주차별 계획 ${c.weeks.length}개</summary>
@@ -526,7 +531,7 @@ function showClassification(r) {
       course_name: document.getElementById("cName").value, professor: document.getElementById("cProf").value,
       semester: document.getElementById("cSem").value, primary_type: document.getElementById("cType").value,
       secondary_types: c.secondary_types, evaluation: c.evaluation, reasons: c.reasons, weeks: c.weeks,
-      syllabus_text: r.syllabus_text,
+      syllabus_text: r.syllabus_text, judged_type: c.judged_type || "", service_reason: c.service_reason || "",
     });
     location.hash = `#/c/${course.id}`;
   };
