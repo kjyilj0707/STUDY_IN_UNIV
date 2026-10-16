@@ -7,6 +7,7 @@ import json
 import re
 from datetime import datetime, timedelta, timezone
 
+import httpx
 from supabase import create_client
 from supabase.lib.client_options import SyncClientOptions
 
@@ -41,7 +42,12 @@ def service():
     """데이터 접근용 클라이언트. 이 클라이언트로는 절대 로그인하지 않는다 (로그인하면 권한이 사용자 것으로 바뀐다)."""
     global _service
     if _service is None:
-        _service = create_client(*_config(), options=_options())
+        # 기본값은 HTTP/2 연결 하나를 모든 요청이 같이 쓴다 → Supabase가 그 연결을 닫으면(GOAWAY)
+        # 동시에 진행 중이던 요청이 모두 실패(ConnectionTerminated)했다. HTTP/1.1 연결 풀 + 연결 재시도로 바꾼다.
+        http = httpx.Client(timeout=60, follow_redirects=True, transport=httpx.HTTPTransport(retries=2))
+        options = _options()
+        options.httpx_client = http
+        _service = create_client(*_config(), options=options)
     return _service
 
 
@@ -126,7 +132,7 @@ def create_course(uid, data):
 
 def delete_course(uid, cid):
     lectures = list_lectures(uid, cid, "id,pdf_path")
-    paths = [l["pdf_path"] for l in lectures if l.get("pdf_path")] + [memo_path(uid, l["id"]) for l in lectures]
+    paths = [l["pdf_path"] for l in lectures if l.get("pdf_path")] + [p for l in lectures for p in user_files(uid, l["id"])]
     if paths:
         service().storage.from_(BUCKET).remove(paths)
     service().table("courses").delete().eq("user_id", uid).eq("id", cid).execute()
@@ -171,7 +177,7 @@ def delete_lecture(uid, lid):
     lec = get_lecture(uid, lid, "id,pdf_path")
     if not lec:
         return
-    service().storage.from_(BUCKET).remove([p for p in (lec.get("pdf_path"), memo_path(uid, lid)) if p])
+    service().storage.from_(BUCKET).remove([p for p in [lec.get("pdf_path"), *user_files(uid, lid)] if p])
     service().table("lectures").delete().eq("user_id", uid).eq("id", lid).execute()
 
 
@@ -179,27 +185,55 @@ def download_pdf(path):
     return service().storage.from_(BUCKET).download(path)
 
 
-# ---------- 필기 (노트의 필기·풀이 공간에 직접 쓴 글) ----------
-# 강의마다 {"칸 번호": "글"} JSON 파일 하나. 칸 번호는 노트에서 필기·풀이 공간이 나오는 순서 (0부터).
+# ---------- 사용자가 노트에 더한 것 (Storage의 강의별 JSON 파일) ----------
+# 필기: {uid}/{lid}.memos.json = {"칸 번호": "글"}. 칸 번호는 노트에서 필기·풀이 공간이 나오는 순서 (0부터).
+# 편집본: {uid}/{lid}.edited.json = {"html": 굵게·형광펜 등을 넣은 노트 HTML}. 없으면 원본 마크다운을 보여 준다.
 
 def memo_path(uid, lid):
     return f"{uid}/{lid}.memos.json"
 
 
-def get_memos(uid, lid):
+def edited_path(uid, lid):
+    return f"{uid}/{lid}.edited.json"
+
+
+def user_files(uid, lid):
+    return [memo_path(uid, lid), edited_path(uid, lid)]
+
+
+def _get_json(path, empty):
     try:
-        return json.loads(service().storage.from_(BUCKET).download(memo_path(uid, lid)))
+        return json.loads(service().storage.from_(BUCKET).download(path))
     except Exception as e:
-        # 아직 쓴 적 없으면 파일이 없다. 그 밖의 오류는 그대로 올린다 (빈 값으로 보고 저장하면 기존 필기를 덮어씀)
+        # 아직 만든 적 없으면 파일이 없다. 그 밖의 오류는 그대로 올린다 (빈 값으로 보고 저장하면 기존 내용을 덮어씀)
         if "not found" in str(e).lower() or "404" in str(e):
-            return {}
+            return empty
         raise
 
 
+def _put_json(path, value):
+    data = json.dumps(value, ensure_ascii=False).encode()
+    service().storage.from_(BUCKET).upload(path, data, {"content-type": "application/json", "upsert": "true"})
+
+
+def get_memos(uid, lid):
+    return _get_json(memo_path(uid, lid), {})
+
+
 def save_memos(uid, lid, memos):
-    data = json.dumps(memos, ensure_ascii=False).encode()
-    service().storage.from_(BUCKET).upload(memo_path(uid, lid), data,
-                                          {"content-type": "application/json", "upsert": "true"})
+    _put_json(memo_path(uid, lid), memos)
+
+
+def get_edited(uid, lid):
+    return _get_json(edited_path(uid, lid), {}).get("html")
+
+
+def save_edited(uid, lid, html):
+    _put_json(edited_path(uid, lid), {"html": html, "updated_at": now_iso()})
+
+
+def delete_edited(uid, lid):
+    service().storage.from_(BUCKET).remove([edited_path(uid, lid)])
 
 
 def fail_interrupted_jobs():

@@ -379,6 +379,36 @@ def save_memo(lid: str, body: Memo, request: Request):
     return {"ok": True}
 
 
+@app.get("/api/lectures/{lid}/edited")
+def get_edited(lid: str, request: Request):
+    user, _ = owned_lecture(request, lid, "id")
+    return {"html": store.get_edited(user["id"], lid)}
+
+
+class Edited(BaseModel):
+    html: str
+
+
+@app.put("/api/lectures/{lid}/edited")
+def save_edited(lid: str, body: Edited, request: Request):
+    """굵게·형광펜·글 수정을 넣은 노트 HTML을 저장한다 (화면에서 DOMPurify로 정리해서 보여 줌)."""
+    user, lec = owned_lecture(request, lid, "id,status")
+    if lec["status"] != "done":
+        raise HTTPException(400, "노트가 완성된 뒤에 편집할 수 있어요.")
+    if not body.html.strip() or len(body.html) > 3_000_000:
+        raise HTTPException(400, "편집한 노트가 비어 있거나 너무 커요.")
+    store.save_edited(user["id"], lid, body.html)
+    return {"ok": True}
+
+
+@app.delete("/api/lectures/{lid}/edited")
+def revert_edited(lid: str, request: Request):
+    """원본으로 되돌리기 (필기는 그대로 둔다)."""
+    user, _ = owned_lecture(request, lid, "id")
+    store.delete_edited(user["id"], lid)
+    return {"ok": True}
+
+
 @app.get("/api/lectures/{lid}/source")
 def get_source(lid: str, request: Request):
     _, lec = owned_lecture(request, lid, "pdf_path,title")
@@ -395,7 +425,7 @@ class Event(BaseModel):
 def client_event(body: Event, request: Request):
     """화면에서만 알 수 있는 사용 기록 (노트 열람·다운로드·인쇄)."""
     user = require_user(request)
-    if body.type not in ("note_view", "note_download", "note_print"):
+    if body.type not in ("note_view", "note_download", "note_print", "note_edit"):
         raise HTTPException(400, "알 수 없는 기록입니다.")
     store.log_event(user["id"], body.type, course_id=body.course_id, lecture_id=body.lecture_id)
     return {"ok": True}

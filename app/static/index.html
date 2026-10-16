@@ -116,6 +116,15 @@ table.list a.title:hover { text-decoration: underline; }
   padding: 0; margin: 2px 0 0; color: var(--ink); line-height: 32px; font-size: 15px;
   background: repeating-linear-gradient(transparent, transparent 31px, #ecebe6 31px, #ecebe6 32px); background-attachment: local; }
 .note blockquote.space:focus-within { border-color: var(--accent); }
+.note[contenteditable="true"] { outline: none; }
+.paper.editing { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.editbar { position: sticky; top: 56px; z-index: 5; display: flex; flex-wrap: wrap; gap: 6px; align-items: center;
+  background: var(--surface); border: 1px solid var(--accent); border-radius: var(--radius); padding: 8px 10px; margin-bottom: 10px; }
+.editbar[hidden] { display: none; }
+.editbar .btn { min-width: 34px; justify-content: center; }
+.editbar .sep { width: 1px; align-self: stretch; background: var(--line); margin: 0 2px; }
+.editbar .swatch { width: 26px; height: 26px; min-width: 0; padding: 0; border-radius: 50%; }
+.editbar .hint { font-size: 12px; color: var(--muted); }
 .memo-status { font-size: 12px; color: var(--muted); }
 .memo-status.err { color: var(--danger); }
 .note blockquote.memo { border-left-color: var(--warn); background: var(--warn-soft); color: var(--warn); border-radius: 0 6px 6px 0; }
@@ -139,6 +148,8 @@ table.list a.title:hover { text-decoration: underline; }
   .note h2 { break-after: avoid; } .note h3 { break-after: avoid; }
   .note blockquote.space { break-inside: avoid; }
   .note textarea.memo-input::placeholder { color: transparent; }
+  .note { -webkit-print-color-adjust: exact; print-color-adjust: exact; } /* 형광펜도 인쇄 */
+  .paper.editing { box-shadow: none; }
 }
 /* 유형 안내 */
 .guide { border: 1px solid #b9d2c4; background: var(--accent-soft); border-radius: var(--radius); padding: 18px 20px; display: grid; gap: 10px; }
@@ -539,7 +550,8 @@ async function viewLecture(cid, lid, scrollToFeedback = false) {
   }
 
   // 완료: 노트 보기
-  const [md, memos] = await Promise.all([api(`/api/lectures/${lid}/note`), api(`/api/lectures/${lid}/memos`)]);
+  const [md, memos, {html: edited}] = await Promise.all([api(`/api/lectures/${lid}/note`),
+    api(`/api/lectures/${lid}/memos`), api(`/api/lectures/${lid}/edited`)]);
   track("note_view", lid, cid);
   const om = l.omissions;
   const omInfo = om && om.length
@@ -553,6 +565,7 @@ async function viewLecture(cid, lid, scrollToFeedback = false) {
       ${omInfo}
       ${ME.is_admin && l.cost_usd != null ? `<span class="pill">비용 $${l.cost_usd}</span>` : ""}
       ${sourceLink}
+      <button class="btn small" id="edit">편집하기</button>
       <button class="btn small" id="dl">마크다운 받기</button>
       <button class="btn small" id="print">인쇄 / PDF 저장</button>
       <button class="btn small primary" id="rate">${l.rating ? `내 평가 ★ ${l.rating}` : "이 자료 평가하기"}</button>
@@ -561,16 +574,44 @@ async function viewLecture(cid, lid, scrollToFeedback = false) {
     <div class="note-layout">
       <nav class="toc" id="toc"></nav>
       <div>
-        <div class="paper"><article class="note" id="note"></article></div>
+        <div class="editbar no-print" id="editbar" hidden>
+          <button class="btn small" data-cmd="bold" title="굵게 (Ctrl+B)"><b>B</b></button>
+          <button class="btn small" data-cmd="italic" title="기울임 (Ctrl+I)"><i>I</i></button>
+          <button class="btn small" data-cmd="underline" title="밑줄 (Ctrl+U)"><u>U</u></button>
+          <button class="btn small" data-cmd="strikeThrough" title="취소선"><s>S</s></button>
+          <span class="sep"></span>
+          <span class="hint">형광펜</span>
+          ${HIGHLIGHTS.map(([c, name]) => `<button class="btn swatch" data-hl="${c}" title="${name} 형광펜" style="background:${c}"></button>`).join("")}
+          <button class="btn small" data-hl="transparent" title="선택한 곳의 형광펜 지우기">형광펜 지우기</button>
+          <span class="sep"></span>
+          <button class="btn small" data-cmd="removeFormat" title="선택한 곳의 굵게·기울임·형광펜 등을 모두 지우기">서식 지우기</button>
+          <button class="btn small" data-cmd="undo" title="되돌리기 (Ctrl+Z)">↶</button>
+          <button class="btn small" data-cmd="redo" title="다시 하기 (Ctrl+Y)">↷</button>
+          <span class="spacer" style="flex:1"></span>
+          <span class="hint">글자를 고르고 버튼을 누르세요 · 글도 직접 고칠 수 있어요</span>
+          <button class="btn small ghost" id="revert">원본으로 되돌리기</button>
+        </div>
+        <div class="paper" id="paper"><article class="note" id="note"></article></div>
         <div id="feedback" class="no-print"></div>
       </div>
     </div>`;
-  renderNote(md, document.getElementById("note"), document.getElementById("toc"));
-  attachMemos(lid, document.getElementById("note"), memos, document.getElementById("memoStatus"));
-  document.getElementById("dl").onclick = () => {
+  const note = document.getElementById("note"), toc = document.getElementById("toc");
+  const status = document.getElementById("memoStatus");
+  renderNote(md, note, toc, edited);
+  attachMemos(lid, note, memos, status);
+  setupEditing({lid, cid, md, memos, note, toc, status, edited: !!edited});
+  document.getElementById("dl").onclick = async () => {
+    let out = mdWithMemos(md, memos);
+    if (note.dataset.edited) {
+      try {
+        out = await editedMarkdown(note, memos);
+      } catch (e) {
+        if (!confirm(`${e.message}\n편집 전 원본 노트 + 필기로 받을까요?`)) return;
+      }
+    }
     track("note_download", lid, cid);
     const a = document.createElement("a");
-    a.href = URL.createObjectURL(new Blob([mdWithMemos(md, memos)], {type: "text/markdown"}));
+    a.href = URL.createObjectURL(new Blob([out], {type: "text/markdown"}));
     a.download = `${l.title}.md`;
     a.click();
   };
@@ -589,6 +630,7 @@ function attachMemos(lid, el, memos, status) {
   el.querySelectorAll("blockquote.space").forEach((b, i) => {
     const label = b.textContent.replace(/\s+/g, " ").trim();
     b.classList.add("typed");
+    b.contentEditable = "false";  // 편집 모드에서도 필기 칸 틀은 그대로 (입력창은 따로 동작)
     b.innerHTML = `<div class="memo-label">${esc(label)}</div>`;
     const ta = document.createElement("textarea");
     ta.className = "memo-input";
@@ -617,6 +659,161 @@ function attachMemos(lid, el, memos, status) {
     ta.addEventListener("blur", () => { if (timer) save(); });
     requestAnimationFrame(grow);
   });
+}
+
+// ---------- 노트 편집 (굵게·형광펜·글 수정) ----------
+// 편집 모드에서 노트를 contenteditable로 바꾸고, 입력을 멈추면 노트 HTML을 저장한다.
+// 저장할 때 수식은 TeX(data-tex)만, 필기 칸은 이름표만 남긴다 (필기 글은 따로 저장).
+const HIGHLIGHTS = [["#fff2a8", "노랑"], ["#d4f5d0", "초록"], ["#ffd6e7", "분홍"], ["#d6ebff", "파랑"]];
+
+function noteHtmlForSave(el) {
+  const c = el.cloneNode(true);
+  c.removeAttribute("contenteditable");
+  c.querySelectorAll(".math").forEach(s => { s.innerHTML = ""; s.removeAttribute("contenteditable"); });
+  c.querySelectorAll("blockquote.space").forEach(b => {
+    const label = (b.querySelector(".memo-label") || b).textContent.trim();
+    b.removeAttribute("class");
+    b.removeAttribute("contenteditable");
+    b.innerHTML = `<p><strong>${esc(label)}</strong></p>`;
+  });
+  c.querySelectorAll("h2[id], h3[id]").forEach(h => h.removeAttribute("id"));
+  return c.innerHTML;
+}
+
+function setupEditing({lid, cid, md, memos, note, toc, status, edited}) {
+  const bar = document.getElementById("editbar"), btn = document.getElementById("edit");
+  const paper = document.getElementById("paper");
+  const show = (text, err) => { status.textContent = text; status.classList.toggle("err", !!err); };
+  const mark = on => { if (on) note.dataset.edited = "1"; else delete note.dataset.edited; };
+  mark(edited);
+  let timer = null, tracked = false, dirty = false;
+
+  const save = async () => {
+    clearTimeout(timer);
+    timer = null;
+    if (!dirty) return;
+    dirty = false;
+    show("편집 저장 중…");
+    try {
+      await api(`/api/lectures/${lid}/edited`, {method: "PUT", headers: {"content-type": "application/json"},
+        body: JSON.stringify({html: noteHtmlForSave(note)})});
+      mark(true);
+      show("편집 저장됨");
+    } catch (e) {
+      dirty = true;
+      show("편집 저장 실패 — 계속 고치면 다시 저장해요", true);
+    }
+  };
+  const changed = () => { dirty = true; clearTimeout(timer); timer = setTimeout(save, 1500); };
+  note.addEventListener("input", e => { if (!e.target.closest("textarea")) changed(); });
+
+  const setMode = on => {
+    note.contentEditable = on ? "true" : "false";
+    bar.hidden = !on;
+    paper.classList.toggle("editing", on);
+    btn.textContent = on ? "편집 끝내기" : "편집하기";
+    btn.classList.toggle("primary", on);
+    if (!on) save();
+    else if (!tracked) { tracked = true; track("note_edit", lid, cid); }
+  };
+  btn.onclick = () => setMode(note.contentEditable !== "true");
+
+  // 버튼을 눌러도 노트의 글자 선택이 풀리지 않게 mousedown 기본 동작을 막는다
+  bar.querySelectorAll("[data-cmd], [data-hl]").forEach(b => {
+    b.onmousedown = e => e.preventDefault();
+    b.onclick = () => {
+      if (b.dataset.hl) {
+        document.execCommand("styleWithCSS", false, true);
+        document.execCommand("hiliteColor", false, b.dataset.hl);
+        document.execCommand("styleWithCSS", false, false);
+      } else {
+        document.execCommand(b.dataset.cmd);
+      }
+      changed();
+    };
+  });
+
+  document.getElementById("revert").onclick = async () => {
+    if (!confirm("굵게·형광펜·글 수정을 모두 지우고 처음 만든 노트로 되돌릴까요? (필기 칸에 쓴 글은 그대로 남아요)")) return;
+    clearTimeout(timer);
+    dirty = false;
+    try {
+      await api(`/api/lectures/${lid}/edited`, {method: "DELETE"});
+    } catch (e) { show("되돌리기 실패 — 다시 시도해 주세요", true); return; }
+    mark(false);
+    renderNote(md, note, toc);
+    attachMemos(lid, note, memos, status);
+    show("원본으로 되돌렸어요");
+  };
+}
+
+// 편집본 마크다운 받기: 화면의 노트(HTML)를 turndown으로 마크다운으로 바꾼다 (처음 받을 때만 불러옴).
+// 수식은 TeX로, 필기 칸은 쓴 글로, 형광펜은 <mark style="background:…">, 밑줄은 <u>로.
+const TURNDOWN = ["https://cdn.jsdelivr.net/npm/turndown@7.2.0/dist/turndown.js",
+  "https://cdn.jsdelivr.net/npm/turndown-plugin-gfm@1.0.2/dist/turndown-plugin-gfm.js"];
+
+const loadScript = src => new Promise((res, rej) => {
+  const s = document.createElement("script");
+  s.src = src;
+  s.onload = res;
+  s.onerror = () => rej(new Error("편집본을 마크다운으로 바꾸는 도구를 불러오지 못했어요."));
+  document.head.appendChild(s);
+});
+
+async function editedMarkdown(note, memos) {
+  for (const [src, name] of [[TURNDOWN[0], "TurndownService"], [TURNDOWN[1], "turndownPluginGfm"]])
+    if (!window[name]) await loadScript(src);
+  // turndown은 내용이 빈 요소를 규칙 없이 지우므로, 수식·필기 칸에 글자를 남겨 둔다
+  const c = note.cloneNode(true);
+  c.querySelectorAll(".math").forEach(s => { s.textContent = s.dataset.tex; });
+  c.querySelectorAll("blockquote.space").forEach((b, i) => {
+    const q = document.createElement("blockquote");
+    q.dataset.space = (b.querySelector(".memo-label") || b).textContent.trim();
+    q.dataset.i = i;
+    q.textContent = q.dataset.space;
+    b.replaceWith(q);
+  });
+  const td = new TurndownService({headingStyle: "atx", bulletListMarker: "-", codeBlockStyle: "fenced", emDelimiter: "*", hr: "---"});
+  td.use(turndownPluginGfm.gfm);
+  // 노트 글은 원래 마크다운에서 나온 것이라 [그림], P_r, 1. 같은 글자에 \ 를 붙이지 않는다 (원본 .md와 같은 모양)
+  td.escape = s => s;
+  td.addRule("listItem", {  // 기본은 "-   항목" → 원본처럼 "- 항목", "1. 항목"
+    filter: "li",
+    replacement: (t, n) => {
+      const list = n.parentNode;
+      const start = Number(list.getAttribute("start") || 1);
+      const prefix = list.nodeName === "OL" ? `${start + [...list.children].indexOf(n)}. ` : "- ";
+      t = t.replace(/^\n+/, "").replace(/\n+$/, "\n").replace(/\n/gm, "\n" + " ".repeat(prefix.length));
+      return prefix + t + (n.nextSibling && !/\n$/.test(t) ? "\n" : "");
+    },
+  });
+  // addRule은 앞에 붙으므로 기본 규칙보다 먼저 적용된다
+  td.addRule("strike", {filter: ["del", "s", "strike"], replacement: t => `~~${t}~~`});
+  td.addRule("underline", {filter: ["u"], replacement: t => t.trim() ? `<u>${t}</u>` : t});
+  td.addRule("highlight", {
+    filter: n => n.nodeName === "SPAN" && n.style.backgroundColor && !/transparent|rgba\(0, 0, 0, 0\)/.test(n.style.backgroundColor),
+    replacement: (t, n) => t.trim() ? `<mark style="background:${n.style.backgroundColor}">${t}</mark>` : t,
+  });
+  td.addRule("math", {
+    filter: n => n.nodeName === "SPAN" && n.classList.contains("math"),
+    // 원본 모양 따라: 한 줄 수식은 $$…$$, 여러 줄(aligned 등)은 $$ 다음 줄부터.
+    // (편집본을 불러올 때 DOMPurify가 data-tex 앞뒤 줄바꿈을 잘라서 안쪽 줄바꿈으로 판단)
+    replacement: (_, n) => {
+      const tex = n.dataset.tex.trim();
+      if (n.dataset.display !== "1") return `$${tex}$`;
+      return tex.includes("\n") ? `\n\n$$\n${tex}\n$$\n\n` : `\n\n$$${tex}$$\n\n`;
+    },
+  });
+  td.addRule("space", {
+    filter: n => n.nodeName === "BLOCKQUOTE" && !!n.dataset.space,
+    replacement: (_, n) => {
+      const text = memos[n.dataset.i];
+      const body = text ? text.replace(/\s+$/, "").split("\n").map(l => `> ${l}  `).join("\n")
+                        : Array(3).fill(">\n> &nbsp;").join("\n");
+      return `\n\n> **${n.dataset.space}**\n${body}\n\n`;
+    },
+  });
+  return td.turndown(c.innerHTML) + "\n";
 }
 
 // 마크다운 받기: 필기 칸 순서대로 쓴 글을 끼워 넣는다 (화면의 blockquote.space 순서와 같은 기준)
@@ -722,18 +919,25 @@ function watchJob(cid, lid) {
 }
 
 // 마크다운 + 수식: 수식을 먼저 빼 두고(marked가 \ 와 _ 를 바꾸지 않게) 렌더 후 KaTeX로 되돌린다.
-function renderNote(md, el, toc) {
-  const math = [];
-  const keep = (tex, display) => { math.push({tex, display}); return `@@MATH${math.length - 1}@@`; };
-  let src = md.replace(/\$\$([\s\S]+?)\$\$/g, (_, t) => keep(t, true))
-              .replace(/(^|[^\\$])\$([^\n$]+?)\$/g, (_, pre, t) => pre + keep(t, false));
-  let html = DOMPurify.sanitize(marked.parse(src, {gfm: true, breaks: false}));
-  html = html.replace(/@@MATH(\d+)@@/g, (_, i) => {
-    const m = math[+i];
-    try { return katex.renderToString(m.tex, {displayMode: m.display, throwOnError: false}); }
-    catch { return esc(m.tex); }
+// 수식은 <span class="math" data-tex>에 TeX를 남겨 두어, 편집본(edited)을 저장·불러올 때 다시 그린다.
+function renderNote(md, el, toc, edited) {
+  if (edited) {
+    el.innerHTML = DOMPurify.sanitize(edited);
+  } else {
+    const math = [];
+    const keep = (tex, display) => { math.push({tex, display}); return `@@MATH${math.length - 1}@@`; };
+    let src = md.replace(/\$\$([\s\S]+?)\$\$/g, (_, t) => keep(t, true))
+                .replace(/(^|[^\\$])\$([^\n$]+?)\$/g, (_, pre, t) => pre + keep(t, false));
+    // marked는 ~한 개~도 취소선으로 본다 → "7~8세기 … p.3~5"가 취소선이 됐다. 코드(`…`) 밖의 물결표 하나는 글자로.
+    src = src.split(/(`+[^`]*`+)/).map((p, i) => i % 2 ? p : p.replace(/(^|[^~\\])~(?!~)/g, "$1\\~")).join("");
+    el.innerHTML = DOMPurify.sanitize(marked.parse(src, {gfm: true, breaks: false})).replace(/@@MATH(\d+)@@/g,
+      (_, i) => `<span class="math" data-tex="${esc(math[+i].tex)}" data-display="${math[+i].display ? 1 : 0}"></span>`);
+  }
+  el.querySelectorAll(".math").forEach(s => {
+    try { katex.render(s.dataset.tex, s, {displayMode: s.dataset.display === "1", throwOnError: false}); }
+    catch { s.textContent = s.dataset.tex; }
+    s.contentEditable = "false";  // 편집 모드에서 수식이 깨지지 않게 통째로만 다룬다
   });
-  el.innerHTML = html;
   el.querySelectorAll("blockquote").forEach(b => {
     const t = b.textContent.replace(/\s+/g, " ").trim();
     if (/^(필기|풀이 공간)$/.test(t)) b.classList.add("space");
@@ -749,7 +953,7 @@ function renderNote(md, el, toc) {
 // ---------- 관리자 ----------
 const EVENT_NAMES = {signup: "가입", login: "로그인", classify: "유형 판정", course_create: "과목 생성",
   lecture_upload: "강의 업로드", generate_start: "생성 시작", generate_done: "생성 완료", generate_error: "생성 오류",
-  note_view: "노트 열람", note_download: "마크다운 받기", note_print: "인쇄", feedback_submit: "자료 평가"};
+  note_view: "노트 열람", note_download: "마크다운 받기", note_print: "인쇄", note_edit: "노트 편집", feedback_submit: "자료 평가"};
 const RATING_NAMES = {overall: "전체 유용성", completeness: "완전성", accuracy: "정확성", structure: "구성",
   traceability: "출처 대조", writing_space: "필기 공간", time_saving: "시간 절약", stage_specific: "단계별 문항"};
 const ISSUE_NAMES = {missing: "빠진 내용", wrong: "잘못 옮김", added: "원본에 없는 내용", order: "순서·구성",
